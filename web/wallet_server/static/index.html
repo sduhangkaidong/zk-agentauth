@@ -1,0 +1,3165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZK-AgentAuth 客户端</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #e9e3d8; font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; box-sizing: border-box; overflow: hidden; }
+  body[data-dark="1"] { background: #14141a; }
+  #root { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(1200px 800px at 20% 0%, rgba(255,200,160,0.55), transparent 55%),
+      radial-gradient(900px 700px at 100% 100%, rgba(150,170,255,0.35), transparent 60%),
+      radial-gradient(700px 600px at 50% 50%, rgba(255,255,255,0.2), transparent 60%);
+  }
+  body[data-dark="1"]::before {
+    background:
+      radial-gradient(1200px 800px at 20% 0%, rgba(80,60,140,0.5), transparent 55%),
+      radial-gradient(900px 700px at 100% 100%, rgba(40,80,140,0.45), transparent 60%);
+  }
+  #root > * { position: relative; z-index: 1; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } = React;
+// ===== app-data.jsx =====
+// app-data.jsx — mock data for ZK-AgentAuth client
+
+const MOCK_CREDENTIALS = [
+  {
+    id: 'cred-001',
+    issuer: '国家政务服务平台',
+    issuerAbbr: 'GAS',
+    type: '居民身份凭证',
+    issuedAt: '2025-08-12',
+    expiresAt: '2030-08-12',
+    status: 'active',
+    attributes: [
+      { key: 'family_name', label: '姓', value: '张', sensitive: true },
+      { key: 'given_name', label: '名', value: 'Alice', sensitive: true },
+      { key: 'age_over_18', label: '年满 18 岁', value: 'true', sensitive: false },
+      { key: 'age_over_21', label: '年满 21 岁', value: 'true', sensitive: false },
+      { key: 'birth_date', label: '出生日期', value: '2000-01-15', sensitive: true },
+      { key: 'nationality', label: '国籍', value: 'CN', sensitive: false },
+      { key: 'id_number', label: '身份证号', value: '110***********0024', sensitive: true },
+    ],
+    sigPreview: 'r₁=0x9f4a…7c2  s₁=0x1be0…c5d',
+  },
+  {
+    id: 'cred-002',
+    issuer: '北京市公安局出入境管理局',
+    issuerAbbr: 'EXT',
+    type: '出入境证件',
+    issuedAt: '2024-11-03',
+    expiresAt: '2034-11-03',
+    status: 'active',
+    attributes: [
+      { key: 'passport_no', label: '证件号', value: 'E1********', sensitive: true },
+      { key: 'is_chinese_citizen', label: '中国公民', value: 'true', sensitive: false },
+      { key: 'visa_country', label: '可免签国家', value: '78 个', sensitive: false },
+    ],
+    sigPreview: 'r₁=0x4abc…992  s₁=0x77ed…104',
+  },
+  {
+    id: 'cred-003',
+    issuer: '清华大学',
+    issuerAbbr: 'THU',
+    type: '在校学籍凭证',
+    issuedAt: '2023-09-01',
+    expiresAt: '2027-06-30',
+    status: 'active',
+    attributes: [
+      { key: 'is_student', label: '在校学生', value: 'true', sensitive: false },
+      { key: 'major', label: '专业', value: '计算机科学', sensitive: true },
+      { key: 'enrolled_year', label: '入学年份', value: '2023', sensitive: true },
+    ],
+    sigPreview: 'r₁=0x21fe…a40  s₁=0x9b3a…7c1',
+  },
+];
+
+const MOCK_AGENTS = [
+  {
+    id: 'agt-bookstore',
+    name: '购书助手',
+    avatar: '📚',
+    color: '#7C6FE0',
+    skills: ['网页浏览', '支付下单', '收件地址'],
+    status: 'online',
+    lastActive: '刚刚',
+    delegations: 1,
+    desc: '基于 Claude 4.5 的购物代理。可代为浏览电商、下单、对账。',
+  },
+  {
+    id: 'agt-trip',
+    name: '差旅代办',
+    avatar: '✈',
+    color: '#5B9DF0',
+    skills: ['酒店比价', '航班查询', '日程读取'],
+    status: 'online',
+    lastActive: '12 分钟前',
+    delegations: 2,
+    desc: '处理出差相关事宜，包含订票、订酒店、报销凭证整理。',
+  },
+  {
+    id: 'agt-finance',
+    name: '财务助手',
+    avatar: '$',
+    color: '#3FAA82',
+    skills: ['账单查询', '记账'],
+    status: 'idle',
+    lastActive: '昨天',
+    delegations: 0,
+    desc: '只读访问账单与发票，可代为整理报表。',
+  },
+  {
+    id: 'agt-legal',
+    name: '合同审查',
+    avatar: '§',
+    color: '#D49250',
+    skills: ['文档解析', '风险标注'],
+    status: 'offline',
+    lastActive: '3 天前',
+    delegations: 0,
+    desc: '阅读合同并标注关键条款。需要文档读取与条款查询权限。',
+  },
+];
+
+const MOCK_DELEGATIONS = [
+  {
+    id: 'del-78a3',
+    rh: '0x8f2c…d4e1',
+    agentId: 'agt-bookstore',
+    credentialId: 'cred-001',
+    createdAt: '2026-04-28 14:32',
+    expiresAt: '2026-05-28 14:32',
+    status: 'active',
+    presentationCount: 3,
+    policy: {
+      allowed_claims: ['age_over_18'],
+      allowed_scopes: ['purchase'],
+      max_amount: 1000,
+      currency: 'CNY',
+      verifiers: ['*.bookstore.example.com', '*.dangdang.cn'],
+    },
+    pkAgent: '04:9a:b2:1f:e8:c4:32:7d:…:5e:a1',
+  },
+  {
+    id: 'del-15bc',
+    rh: '0x44b7…22f0',
+    agentId: 'agt-trip',
+    credentialId: 'cred-002',
+    createdAt: '2026-05-01 09:18',
+    expiresAt: '2026-06-01 09:18',
+    status: 'active',
+    presentationCount: 12,
+    policy: {
+      allowed_claims: ['is_chinese_citizen', 'visa_country'],
+      allowed_scopes: ['booking', 'lookup'],
+      max_amount: 8000,
+      currency: 'CNY',
+      verifiers: ['*.ctrip.com', '*.fliggy.com'],
+    },
+    pkAgent: '04:7e:33:9b:55:0d:a8:14:…:c2:30',
+  },
+  {
+    id: 'del-32a1',
+    rh: '0xd1ee…3a5b',
+    agentId: 'agt-trip',
+    credentialId: 'cred-001',
+    createdAt: '2026-05-05 21:00',
+    expiresAt: '2026-05-12 21:00',
+    status: 'active',
+    presentationCount: 1,
+    policy: {
+      allowed_claims: ['age_over_18'],
+      allowed_scopes: ['booking'],
+      max_amount: 2000,
+      currency: 'CNY',
+      verifiers: ['*.airbnb.com'],
+    },
+    pkAgent: '04:11:bd:ce:90:33:42:81:…:f4:0a',
+  },
+  {
+    id: 'del-09d5',
+    rh: '0x6620…91ac',
+    agentId: 'agt-bookstore',
+    credentialId: 'cred-003',
+    createdAt: '2026-04-10 11:00',
+    expiresAt: '2026-04-30 11:00',
+    status: 'revoked',
+    revokedAt: '2026-04-22 16:43',
+    presentationCount: 5,
+    policy: {
+      allowed_claims: ['is_student'],
+      allowed_scopes: ['discount_lookup'],
+      max_amount: 200,
+      currency: 'CNY',
+      verifiers: ['*.jd.com'],
+    },
+    pkAgent: '04:55:21:7a:d2:9e:18:6b:…:80:cc',
+  },
+];
+
+const MOCK_SESSIONS = [
+  {
+    id: 'ses-9a02',
+    delegationId: 'del-78a3',
+    verifier: 'bookstore.example.com',
+    verifierLabel: '当当网（书店）',
+    timestamp: '2026-05-06 11:24:08',
+    claims: ['age_over_18 = true'],
+    proofSize: '4.2 KB',
+    proofTime: 1840,
+    status: 'accepted',
+    nonce: '0x3f29…b1c8',
+    proofPreview: '0x29 a4 1c b6 ff e8 22 9d 4f a2 13 0c 88 d1 7e 55 …',
+  },
+  {
+    id: 'ses-8d11',
+    delegationId: 'del-15bc',
+    verifier: 'ctrip.com',
+    verifierLabel: '携程',
+    timestamp: '2026-05-06 10:02:17',
+    claims: ['is_chinese_citizen = true'],
+    proofSize: '4.2 KB',
+    proofTime: 1962,
+    status: 'accepted',
+    nonce: '0x71ea…0d44',
+    proofPreview: '0x11 88 03 fe 6c 22 9b ad 78 90 12 cc 41 ee 0a 33 …',
+  },
+  {
+    id: 'ses-7b9d',
+    delegationId: 'del-15bc',
+    verifier: 'fliggy.com',
+    verifierLabel: '飞猪',
+    timestamp: '2026-05-05 22:48:55',
+    claims: ['visa_country ∈ supported'],
+    proofSize: '4.4 KB',
+    proofTime: 2104,
+    status: 'accepted',
+    nonce: '0xacb0…ee21',
+    proofPreview: '0x55 ce 93 ad 02 a1 7f e3 9c 18 4d bb 0e 67 22 11 …',
+  },
+  {
+    id: 'ses-5042',
+    delegationId: 'del-09d5',
+    verifier: 'jd.com',
+    verifierLabel: '京东',
+    timestamp: '2026-04-23 09:11:02',
+    claims: ['is_student = true'],
+    proofSize: '4.1 KB',
+    proofTime: 1740,
+    status: 'rejected',
+    rejectReason: '撤销列表非成员证明失败（约束⑪）',
+    nonce: '0x223a…ccd9',
+    proofPreview: '0x80 02 1f 7c 90 33 e1 a8 …',
+  },
+];
+
+const MOCK_INBOX = [
+  {
+    id: 'inb-001',
+    type: 'challenge',
+    from: 'bookstore.example.com',
+    fromLabel: '当当网',
+    title: '请求出示：年龄认证',
+    body: '该网站要求 Agent 证明委托人年满 18 岁，以购买《密码学原理》。',
+    nonce: '0x71b2…ac4d',
+    requiredClaims: ['age_over_18'],
+    timestamp: '刚刚',
+    unread: true,
+    delegationId: 'del-78a3',
+  },
+  {
+    id: 'inb-002',
+    type: 'challenge',
+    from: 'fliggy.com',
+    fromLabel: '飞猪旅行',
+    title: '请求出示：免签国民身份',
+    body: '飞猪正在为您筛选可免签目的地，需要证明 visa_country。',
+    nonce: '0x88af…2210',
+    requiredClaims: ['visa_country'],
+    timestamp: '4 分钟前',
+    unread: true,
+    delegationId: 'del-15bc',
+  },
+  {
+    id: 'inb-003',
+    type: 'notice',
+    from: '撤销服务 RS',
+    fromLabel: 'RS',
+    title: '委托 del-09d5 已成功撤销',
+    body: '撤销句柄 rh = 0x6620…91ac 已写入 RL Merkle 树，新根：0x4f02…ee19',
+    timestamp: '昨天',
+    unread: false,
+  },
+  {
+    id: 'inb-004',
+    type: 'notice',
+    from: '清华大学',
+    fromLabel: 'THU',
+    title: '凭证更新可用',
+    body: '您的在校学籍凭证已更新版本（v3 → v4），建议重新拉取。',
+    timestamp: '2 天前',
+    unread: false,
+  },
+];
+
+window.MOCK_CREDENTIALS = MOCK_CREDENTIALS;
+window.MOCK_AGENTS = MOCK_AGENTS;
+window.MOCK_DELEGATIONS = MOCK_DELEGATIONS;
+window.MOCK_SESSIONS = MOCK_SESSIONS;
+window.MOCK_INBOX = MOCK_INBOX;
+
+
+
+// ===== tweaks-panel.jsx =====
+
+// tweaks-panel.jsx
+// Reusable Tweaks shell + form-control helpers.
+//
+// Owns the host protocol (listens for __activate_edit_mode / __deactivate_edit_mode,
+// posts __edit_mode_available / __edit_mode_set_keys / __edit_mode_dismissed) so
+// individual prototypes don't re-roll it. Ships a consistent set of controls so you
+// don't hand-draw <input type="range">, segmented radios, steppers, etc.
+//
+// Usage (in an HTML file that loads React + Babel):
+//
+//   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+//     "primaryColor": "#D97757",
+//     "palette": ["#D97757", "#29261b", "#f6f4ef"],
+//     "fontSize": 16,
+//     "density": "regular",
+//     "dark": false
+//   }/*EDITMODE-END*/;
+//
+//   function App() {
+//     const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+//     return (
+//       <div style={{ fontSize: t.fontSize, color: t.primaryColor }}>
+//         Hello
+//         <TweaksPanel>
+//           <TweakSection label="Typography" />
+//           <TweakSlider label="Font size" value={t.fontSize} min={10} max={32} unit="px"
+//                        onChange={(v) => setTweak('fontSize', v)} />
+//           <TweakRadio  label="Density" value={t.density}
+//                        options={['compact', 'regular', 'comfy']}
+//                        onChange={(v) => setTweak('density', v)} />
+//           <TweakSection label="Theme" />
+//           <TweakColor  label="Primary" value={t.primaryColor}
+//                        options={['#D97757', '#2A6FDB', '#1F8A5B', '#7A5AE0']}
+//                        onChange={(v) => setTweak('primaryColor', v)} />
+//           <TweakColor  label="Palette" value={t.palette}
+//                        options={[['#D97757', '#29261b', '#f6f4ef'],
+//                                  ['#475569', '#0f172a', '#f1f5f9']]}
+//                        onChange={(v) => setTweak('palette', v)} />
+//           <TweakToggle label="Dark mode" value={t.dark}
+//                        onChange={(v) => setTweak('dark', v)} />
+//         </TweaksPanel>
+//       </div>
+//     );
+//   }
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+const __TWEAKS_STYLE = `
+  .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
+    max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+    transform:scale(var(--dc-inv-zoom,1));transform-origin:bottom right;
+    background:rgba(250,249,247,.78);color:#29261b;
+    -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+    border:.5px solid rgba(255,255,255,.6);border-radius:14px;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+    font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+  .twk-hd{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 8px 10px 14px;cursor:move;user-select:none}
+  .twk-hd b{font-size:12px;font-weight:600;letter-spacing:.01em}
+  .twk-x{appearance:none;border:0;background:transparent;color:rgba(41,38,27,.55);
+    width:22px;height:22px;border-radius:6px;cursor:default;font-size:13px;line-height:1}
+  .twk-x:hover{background:rgba(0,0,0,.06);color:#29261b}
+  .twk-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px;
+    overflow-y:auto;overflow-x:hidden;min-height:0;
+    scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.15) transparent}
+  .twk-body::-webkit-scrollbar{width:8px}
+  .twk-body::-webkit-scrollbar-track{background:transparent;margin:2px}
+  .twk-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:4px;
+    border:2px solid transparent;background-clip:content-box}
+  .twk-body::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.25);
+    border:2px solid transparent;background-clip:content-box}
+  .twk-row{display:flex;flex-direction:column;gap:5px}
+  .twk-row-h{flex-direction:row;align-items:center;justify-content:space-between;gap:10px}
+  .twk-lbl{display:flex;justify-content:space-between;align-items:baseline;
+    color:rgba(41,38,27,.72)}
+  .twk-lbl>span:first-child{font-weight:500}
+  .twk-val{color:rgba(41,38,27,.5);font-variant-numeric:tabular-nums}
+
+  .twk-sect{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(41,38,27,.45);padding:10px 0 0}
+  .twk-sect:first-child{padding-top:0}
+
+  .twk-field{appearance:none;width:100%;height:26px;padding:0 8px;
+    border:.5px solid rgba(0,0,0,.1);border-radius:7px;
+    background:rgba(255,255,255,.6);color:inherit;font:inherit;outline:none}
+  .twk-field:focus{border-color:rgba(0,0,0,.25);background:rgba(255,255,255,.85)}
+  select.twk-field{padding-right:22px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='rgba(0,0,0,.5)' d='M0 0h10L5 6z'/></svg>");
+    background-repeat:no-repeat;background-position:right 8px center}
+
+  .twk-slider{appearance:none;-webkit-appearance:none;width:100%;height:4px;margin:6px 0;
+    border-radius:999px;background:rgba(0,0,0,.12);outline:none}
+  .twk-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:14px;height:14px;border-radius:50%;background:#fff;
+    border:.5px solid rgba(0,0,0,.12);box-shadow:0 1px 3px rgba(0,0,0,.2);cursor:default}
+  .twk-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;
+    background:#fff;border:.5px solid rgba(0,0,0,.12);box-shadow:0 1px 3px rgba(0,0,0,.2);cursor:default}
+
+  .twk-seg{position:relative;display:flex;padding:2px;border-radius:8px;
+    background:rgba(0,0,0,.06);user-select:none}
+  .twk-seg-thumb{position:absolute;top:2px;bottom:2px;border-radius:6px;
+    background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.12);
+    transition:left .15s cubic-bezier(.3,.7,.4,1),width .15s}
+  .twk-seg.dragging .twk-seg-thumb{transition:none}
+  .twk-seg button{appearance:none;position:relative;z-index:1;flex:1;border:0;
+    background:transparent;color:inherit;font:inherit;font-weight:500;min-height:22px;
+    border-radius:6px;cursor:default;padding:4px 6px;line-height:1.2;
+    overflow-wrap:anywhere}
+
+  .twk-toggle{position:relative;width:32px;height:18px;border:0;border-radius:999px;
+    background:rgba(0,0,0,.15);transition:background .15s;cursor:default;padding:0}
+  .twk-toggle[data-on="1"]{background:#34c759}
+  .twk-toggle i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+  .twk-toggle[data-on="1"] i{transform:translateX(14px)}
+
+  .twk-num{display:flex;align-items:center;height:26px;padding:0 0 0 8px;
+    border:.5px solid rgba(0,0,0,.1);border-radius:7px;background:rgba(255,255,255,.6)}
+  .twk-num-lbl{font-weight:500;color:rgba(41,38,27,.6);cursor:ew-resize;
+    user-select:none;padding-right:8px}
+  .twk-num input{flex:1;min-width:0;height:100%;border:0;background:transparent;
+    font:inherit;font-variant-numeric:tabular-nums;text-align:right;padding:0 8px 0 0;
+    outline:none;color:inherit;-moz-appearance:textfield}
+  .twk-num input::-webkit-inner-spin-button,.twk-num input::-webkit-outer-spin-button{
+    -webkit-appearance:none;margin:0}
+  .twk-num-unit{padding-right:8px;color:rgba(41,38,27,.45)}
+
+  .twk-btn{appearance:none;height:26px;padding:0 12px;border:0;border-radius:7px;
+    background:rgba(0,0,0,.78);color:#fff;font:inherit;font-weight:500;cursor:default}
+  .twk-btn:hover{background:rgba(0,0,0,.88)}
+  .twk-btn.secondary{background:rgba(0,0,0,.06);color:inherit}
+  .twk-btn.secondary:hover{background:rgba(0,0,0,.1)}
+
+  .twk-swatch{appearance:none;-webkit-appearance:none;width:56px;height:22px;
+    border:.5px solid rgba(0,0,0,.1);border-radius:6px;padding:0;cursor:default;
+    background:transparent;flex-shrink:0}
+  .twk-swatch::-webkit-color-swatch-wrapper{padding:0}
+  .twk-swatch::-webkit-color-swatch{border:0;border-radius:5.5px}
+  .twk-swatch::-moz-color-swatch{border:0;border-radius:5.5px}
+
+  .twk-chips{display:flex;gap:6px}
+  .twk-chip{position:relative;appearance:none;flex:1;min-width:0;height:46px;
+    padding:0;border:0;border-radius:6px;overflow:hidden;cursor:default;
+    box-shadow:0 0 0 .5px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.06);
+    transition:transform .12s cubic-bezier(.3,.7,.4,1),box-shadow .12s}
+  .twk-chip:hover{transform:translateY(-1px);
+    box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 4px 10px rgba(0,0,0,.12)}
+  .twk-chip[data-on="1"]{box-shadow:0 0 0 1.5px rgba(0,0,0,.85),
+    0 2px 6px rgba(0,0,0,.15)}
+  .twk-chip>span{position:absolute;top:0;bottom:0;right:0;width:34%;
+    display:flex;flex-direction:column;box-shadow:-1px 0 0 rgba(0,0,0,.1)}
+  .twk-chip>span>i{flex:1;box-shadow:0 -1px 0 rgba(0,0,0,.1)}
+  .twk-chip>span>i:first-child{box-shadow:none}
+  .twk-chip svg{position:absolute;top:6px;left:6px;width:13px;height:13px;
+    filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+`;
+
+// ── useTweaks ───────────────────────────────────────────────────────────────
+// Single source of truth for tweak values. setTweak persists via the host
+// (__edit_mode_set_keys → host rewrites the EDITMODE block on disk).
+function useTweaks(defaults) {
+  const [values, setValues] = React.useState(defaults);
+  // Accepts either setTweak('key', value) or setTweak({ key: value, ... }) so a
+  // useState-style call doesn't write a "[object Object]" key into the persisted
+  // JSON block.
+  const setTweak = React.useCallback((keyOrEdits, val) => {
+    const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
+      ? keyOrEdits : { [keyOrEdits]: val };
+    setValues((prev) => ({ ...prev, ...edits }));
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
+    // Same-window signal so in-page listeners (deck-stage rail thumbnails)
+    // can react — the parent message only reaches the host, not peers.
+    window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
+  }, []);
+  return [values, setTweak];
+}
+
+// ── TweaksPanel ─────────────────────────────────────────────────────────────
+// Floating shell. Registers the protocol listener BEFORE announcing
+// availability — if the announce ran first, the host's activate could land
+// before our handler exists and the toolbar toggle would silently no-op.
+// The close button posts __edit_mode_dismissed so the host's toolbar toggle
+// flips off in lockstep; the host echoes __deactivate_edit_mode back which
+// is what actually hides the panel.
+function TweaksPanel({ title = 'Tweaks', noDeckControls = false, children }) {
+  const [open, setOpen] = React.useState(false);
+  const dragRef = React.useRef(null);
+  // Auto-inject a rail toggle when a <deck-stage> is on the page. The
+  // toggle drives the deck's per-viewer _railVisible via window message;
+  // state is mirrored from the same localStorage key the deck reads so
+  // the control reflects reality across reloads. The mechanism is the
+  // message — authors who want custom placement can post it directly
+  // and pass noDeckControls to suppress this one.
+  const hasDeckStage = React.useMemo(
+    () => typeof document !== 'undefined' && !!document.querySelector('deck-stage'),
+    [],
+  );
+  // Hide the toggle until the host has actually enabled the rail (the
+  // __omelette_rail_enabled window message, posted only when the
+  // omelette_deck_rail_enabled flag is on for this user). The initial read
+  // covers TweaksPanel mounting after the message already arrived; the
+  // listener covers the common case of mounting first.
+  const [railEnabled, setRailEnabled] = React.useState(
+    () => hasDeckStage && !!document.querySelector('deck-stage')?._railEnabled,
+  );
+  React.useEffect(() => {
+    if (!hasDeckStage || railEnabled) return undefined;
+    const onMsg = (e) => {
+      if (e.data && e.data.type === '__omelette_rail_enabled') setRailEnabled(true);
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [hasDeckStage, railEnabled]);
+  const [railVisible, setRailVisible] = React.useState(() => {
+    try { return localStorage.getItem('deck-stage.railVisible') !== '0'; } catch (e) { return true; }
+  });
+  const toggleRail = (on) => {
+    setRailVisible(on);
+    window.postMessage({ type: '__deck_rail_visible', on }, '*');
+  };
+  const offsetRef = React.useRef({ x: 16, y: 16 });
+  const PAD = 16;
+
+  const clampToViewport = React.useCallback(() => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
+    const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+    offsetRef.current = {
+      x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
+      y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
+    };
+    panel.style.right = offsetRef.current.x + 'px';
+    panel.style.bottom = offsetRef.current.y + 'px';
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    clampToViewport();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', clampToViewport);
+      return () => window.removeEventListener('resize', clampToViewport);
+    }
+    const ro = new ResizeObserver(clampToViewport);
+    ro.observe(document.documentElement);
+    return () => ro.disconnect();
+  }, [open, clampToViewport]);
+
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      const t = e?.data?.type;
+      if (t === '__activate_edit_mode') setOpen(true);
+      else if (t === '__deactivate_edit_mode') setOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const dismiss = () => {
+    setOpen(false);
+    window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*');
+  };
+
+  const onDragStart = (e) => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const startRight = window.innerWidth - r.right;
+    const startBottom = window.innerHeight - r.bottom;
+    const move = (ev) => {
+      offsetRef.current = {
+        x: startRight - (ev.clientX - sx),
+        y: startBottom - (ev.clientY - sy),
+      };
+      clampToViewport();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  if (!open) return null;
+  return (
+    <>
+      <style>{__TWEAKS_STYLE}</style>
+      <div ref={dragRef} className="twk-panel" data-noncommentable=""
+           style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}>
+        <div className="twk-hd" onMouseDown={onDragStart}>
+          <b>{title}</b>
+          <button className="twk-x" aria-label="Close tweaks"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={dismiss}>✕</button>
+        </div>
+        <div className="twk-body">
+          {children}
+          {hasDeckStage && railEnabled && !noDeckControls && (
+            <TweakSection label="Deck">
+              <TweakToggle label="Thumbnail rail" value={railVisible} onChange={toggleRail} />
+            </TweakSection>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Layout helpers ──────────────────────────────────────────────────────────
+
+function TweakSection({ label, children }) {
+  return (
+    <>
+      <div className="twk-sect">{label}</div>
+      {children}
+    </>
+  );
+}
+
+function TweakRow({ label, value, children, inline = false }) {
+  return (
+    <div className={inline ? 'twk-row twk-row-h' : 'twk-row'}>
+      <div className="twk-lbl">
+        <span>{label}</span>
+        {value != null && <span className="twk-val">{value}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Controls ────────────────────────────────────────────────────────────────
+
+function TweakSlider({ label, value, min = 0, max = 100, step = 1, unit = '', onChange }) {
+  return (
+    <TweakRow label={label} value={`${value}${unit}`}>
+      <input type="range" className="twk-slider" min={min} max={max} step={step}
+             value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </TweakRow>
+  );
+}
+
+function TweakToggle({ label, value, onChange }) {
+  return (
+    <div className="twk-row twk-row-h">
+      <div className="twk-lbl"><span>{label}</span></div>
+      <button type="button" className="twk-toggle" data-on={value ? '1' : '0'}
+              role="switch" aria-checked={!!value}
+              onClick={() => onChange(!value)}><i /></button>
+    </div>
+  );
+}
+
+function TweakRadio({ label, value, options, onChange }) {
+  const trackRef = React.useRef(null);
+  const [dragging, setDragging] = React.useState(false);
+  // The active value is read by pointer-move handlers attached for the lifetime
+  // of a drag — ref it so a stale closure doesn't fire onChange for every move.
+  const valueRef = React.useRef(value);
+  valueRef.current = value;
+
+  // Segments wrap mid-word once per-segment width runs out. The track is
+  // ~248px (280 panel − 28 body pad − 4 seg pad), each button loses 12px
+  // to its own padding, and 11.5px system-ui averages ~6.3px/char — so 2
+  // options fit ~16 chars each, 3 fit ~10. Past that (or >3 options), fall
+  // back to a dropdown rather than wrap.
+  const labelLen = (o) => String(typeof o === 'object' ? o.label : o).length;
+  const maxLen = options.reduce((m, o) => Math.max(m, labelLen(o)), 0);
+  const fitsAsSegments = maxLen <= ({ 2: 16, 3: 10 }[options.length] ?? 0);
+  if (!fitsAsSegments) {
+    // <select> emits strings — map back to the original option value so the
+    // fallback stays type-preserving (numbers, booleans) like the segment path.
+    const resolve = (s) => {
+      const m = options.find((o) => String(typeof o === 'object' ? o.value : o) === s);
+      return m === undefined ? s : typeof m === 'object' ? m.value : m;
+    };
+    return <TweakSelect label={label} value={value} options={options}
+                        onChange={(s) => onChange(resolve(s))} />;
+  }
+  const opts = options.map((o) => (typeof o === 'object' ? o : { value: o, label: o }));
+  const idx = Math.max(0, opts.findIndex((o) => o.value === value));
+  const n = opts.length;
+
+  const segAt = (clientX) => {
+    const r = trackRef.current.getBoundingClientRect();
+    const inner = r.width - 4;
+    const i = Math.floor(((clientX - r.left - 2) / inner) * n);
+    return opts[Math.max(0, Math.min(n - 1, i))].value;
+  };
+
+  const onPointerDown = (e) => {
+    setDragging(true);
+    const v0 = segAt(e.clientX);
+    if (v0 !== valueRef.current) onChange(v0);
+    const move = (ev) => {
+      if (!trackRef.current) return;
+      const v = segAt(ev.clientX);
+      if (v !== valueRef.current) onChange(v);
+    };
+    const up = () => {
+      setDragging(false);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  return (
+    <TweakRow label={label}>
+      <div ref={trackRef} role="radiogroup" onPointerDown={onPointerDown}
+           className={dragging ? 'twk-seg dragging' : 'twk-seg'}>
+        <div className="twk-seg-thumb"
+             style={{ left: `calc(2px + ${idx} * (100% - 4px) / ${n})`,
+                      width: `calc((100% - 4px) / ${n})` }} />
+        {opts.map((o) => (
+          <button key={o.value} type="button" role="radio" aria-checked={o.value === value}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </TweakRow>
+  );
+}
+
+function TweakSelect({ label, value, options, onChange }) {
+  return (
+    <TweakRow label={label}>
+      <select className="twk-field" value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => {
+          const v = typeof o === 'object' ? o.value : o;
+          const l = typeof o === 'object' ? o.label : o;
+          return <option key={v} value={v}>{l}</option>;
+        })}
+      </select>
+    </TweakRow>
+  );
+}
+
+function TweakText({ label, value, placeholder, onChange }) {
+  return (
+    <TweakRow label={label}>
+      <input className="twk-field" type="text" value={value} placeholder={placeholder}
+             onChange={(e) => onChange(e.target.value)} />
+    </TweakRow>
+  );
+}
+
+function TweakNumber({ label, value, min, max, step = 1, unit = '', onChange }) {
+  const clamp = (n) => {
+    if (min != null && n < min) return min;
+    if (max != null && n > max) return max;
+    return n;
+  };
+  const startRef = React.useRef({ x: 0, val: 0 });
+  const onScrubStart = (e) => {
+    e.preventDefault();
+    startRef.current = { x: e.clientX, val: value };
+    const decimals = (String(step).split('.')[1] || '').length;
+    const move = (ev) => {
+      const dx = ev.clientX - startRef.current.x;
+      const raw = startRef.current.val + dx * step;
+      const snapped = Math.round(raw / step) * step;
+      onChange(clamp(Number(snapped.toFixed(decimals))));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <div className="twk-num">
+      <span className="twk-num-lbl" onPointerDown={onScrubStart}>{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step}
+             onChange={(e) => onChange(clamp(Number(e.target.value)))} />
+      {unit && <span className="twk-num-unit">{unit}</span>}
+    </div>
+  );
+}
+
+// Relative-luminance contrast pick — checkmarks drawn over a swatch need to
+// read on both #111 and #fafafa without per-option configuration. Hex input
+// only (#rgb / #rrggbb); named or rgb()/hsl() colors fall through to "light".
+function __twkIsLight(hex) {
+  const h = String(hex).replace('#', '');
+  const x = h.length === 3 ? h.replace(/./g, (c) => c + c) : h.padEnd(6, '0');
+  const n = parseInt(x.slice(0, 6), 16);
+  if (Number.isNaN(n)) return true;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return r * 299 + g * 587 + b * 114 > 148000;
+}
+
+const __TwkCheck = ({ light }) => (
+  <svg viewBox="0 0 14 14" aria-hidden="true">
+    <path d="M3 7.2 5.8 10 11 4.2" fill="none" strokeWidth="2.2"
+          strokeLinecap="round" strokeLinejoin="round"
+          stroke={light ? 'rgba(0,0,0,.78)' : '#fff'} />
+  </svg>
+);
+
+// TweakColor — curated color/palette picker. Each option is either a single
+// hex string or an array of 1-5 hex strings; the card adapts — a lone color
+// renders solid, a palette renders colors[0] as the hero (left ~2/3) with the
+// rest stacked in a sharp column on the right. onChange emits the
+// option in the shape it was passed (string stays string, array stays array).
+// Without options it falls back to the native color input for back-compat.
+function TweakColor({ label, value, options, onChange }) {
+  if (!options || !options.length) {
+    return (
+      <div className="twk-row twk-row-h">
+        <div className="twk-lbl"><span>{label}</span></div>
+        <input type="color" className="twk-swatch" value={value}
+               onChange={(e) => onChange(e.target.value)} />
+      </div>
+    );
+  }
+  // Native <input type=color> emits lowercase hex per the HTML spec, so
+  // compare case-insensitively. String() guards JSON.stringify(undefined),
+  // which returns the primitive undefined (no .toLowerCase).
+  const key = (o) => String(JSON.stringify(o)).toLowerCase();
+  const cur = key(value);
+  return (
+    <TweakRow label={label}>
+      <div className="twk-chips" role="radiogroup">
+        {options.map((o, i) => {
+          const colors = Array.isArray(o) ? o : [o];
+          const [hero, ...rest] = colors;
+          const sup = rest.slice(0, 4);
+          const on = key(o) === cur;
+          return (
+            <button key={i} type="button" className="twk-chip" role="radio"
+                    aria-checked={on} data-on={on ? '1' : '0'}
+                    aria-label={colors.join(', ')} title={colors.join(' · ')}
+                    style={{ background: hero }}
+                    onClick={() => onChange(o)}>
+              {sup.length > 0 && (
+                <span>
+                  {sup.map((c, j) => <i key={j} style={{ background: c }} />)}
+                </span>
+              )}
+              {on && <__TwkCheck light={__twkIsLight(hero)} />}
+            </button>
+          );
+        })}
+      </div>
+    </TweakRow>
+  );
+}
+
+function TweakButton({ label, onClick, secondary = false }) {
+  return (
+    <button type="button" className={secondary ? 'twk-btn secondary' : 'twk-btn'}
+            onClick={onClick}>{label}</button>
+  );
+}
+
+Object.assign(window, {
+  useTweaks, TweaksPanel, TweakSection, TweakRow,
+  TweakSlider, TweakToggle, TweakRadio, TweakSelect,
+  TweakText, TweakNumber, TweakColor, TweakButton,
+});
+
+
+
+// ===== app-shared.jsx =====
+// app-shared.jsx — design tokens, shared visual primitives, ZK pieces
+
+const Z = window.MOCK_AGENTS;
+
+// ─── design tokens ───────────────────────────────────────────────
+const TOKENS = {
+  font: '-apple-system, BlinkMacSystemFont, "SF Pro", "PingFang SC", "Helvetica Neue", sans-serif',
+  mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
+};
+
+// density-aware spacing — read tweaks via context
+const DensityCtx = React.createContext('regular');
+const ThemeCtx = React.createContext({ accent: '#5B6CFF', dark: false, zkLevel: 'rich' });
+
+function useDS() {
+  const d = React.useContext(DensityCtx);
+  const t = React.useContext(ThemeCtx);
+  const sp = d === 'compact'
+    ? { xs: 4, s: 6, m: 10, l: 14, xl: 20, xxl: 28, row: 28, card: 12 }
+    : d === 'comfy'
+    ? { xs: 6, s: 10, m: 16, l: 22, xl: 32, xxl: 44, row: 44, card: 22 }
+    : { xs: 5, s: 8, m: 12, l: 18, xl: 26, xxl: 36, row: 36, card: 16 };
+  const fs = d === 'compact'
+    ? { xs: 10, s: 11, m: 12, l: 13, xl: 15, h: 18, hh: 24 }
+    : d === 'comfy'
+    ? { xs: 12, s: 13, m: 14, l: 16, xl: 18, h: 22, hh: 30 }
+    : { xs: 11, s: 12, m: 13, l: 14, xl: 16, h: 20, hh: 26 };
+  return { sp, fs, ...t, font: TOKENS.font, mono: TOKENS.mono };
+}
+
+// ─── color helpers (theme aware) ─────────────────────────────────
+function colors(t) {
+  if (t.dark) return {
+    bg: '#1c1c20', bg2: '#26262c', bgPanel: 'rgba(40,40,46,0.85)',
+    text: '#f0f0f4', textSub: 'rgba(240,240,244,0.62)', textFaint: 'rgba(240,240,244,0.40)',
+    border: 'rgba(255,255,255,0.10)', borderSoft: 'rgba(255,255,255,0.06)',
+    accent: t.accent, success: '#3fc984', warn: '#f0a020', danger: '#f06060',
+    chipBg: 'rgba(255,255,255,0.06)', chipText: 'rgba(240,240,244,0.78)',
+    code: 'rgba(255,255,255,0.04)',
+  };
+  return {
+    bg: '#fbfaf7', bg2: '#f3f1ec', bgPanel: 'rgba(255,255,255,0.78)',
+    text: '#1d1c1a', textSub: 'rgba(29,28,26,0.62)', textFaint: 'rgba(29,28,26,0.40)',
+    border: 'rgba(0,0,0,0.10)', borderSoft: 'rgba(0,0,0,0.06)',
+    accent: t.accent, success: '#239b6a', warn: '#cd8500', danger: '#d04848',
+    chipBg: 'rgba(0,0,0,0.04)', chipText: 'rgba(29,28,26,0.78)',
+    code: 'rgba(0,0,0,0.03)',
+  };
+}
+
+// ─── primitives ──────────────────────────────────────────────────
+function Pill({ children, tone = 'neutral', style = {} }) {
+  const ds = useDS(); const c = colors(ds);
+  const tones = {
+    neutral: { bg: c.chipBg, fg: c.chipText, border: 'transparent' },
+    accent:  { bg: 'color-mix(in oklab, ' + c.accent + ' 14%, transparent)', fg: c.accent, border: 'color-mix(in oklab, ' + c.accent + ' 25%, transparent)' },
+    success: { bg: 'color-mix(in oklab, ' + c.success + ' 14%, transparent)', fg: c.success, border: 'color-mix(in oklab, ' + c.success + ' 28%, transparent)' },
+    warn:    { bg: 'color-mix(in oklab, ' + c.warn + ' 14%, transparent)', fg: c.warn, border: 'color-mix(in oklab, ' + c.warn + ' 28%, transparent)' },
+    danger:  { bg: 'color-mix(in oklab, ' + c.danger + ' 14%, transparent)', fg: c.danger, border: 'color-mix(in oklab, ' + c.danger + ' 28%, transparent)' },
+  };
+  const tn = tones[tone] || tones.neutral;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '2px 8px', borderRadius: 999,
+      background: tn.bg, color: tn.fg,
+      border: '0.5px solid ' + tn.border,
+      fontSize: ds.fs.xs, fontWeight: 500, lineHeight: 1.4,
+      whiteSpace: 'nowrap',
+      ...style,
+    }}>{children}</span>
+  );
+}
+
+function Btn({ children, kind = 'default', onClick, disabled, style = {}, icon, danger }) {
+  const ds = useDS(); const c = colors(ds);
+  const base = {
+    appearance: 'none', border: 0, font: 'inherit', fontWeight: 500,
+    fontSize: ds.fs.m, padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+    borderRadius: 8, cursor: disabled ? 'not-allowed' : 'pointer',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    transition: 'all 0.12s', opacity: disabled ? 0.45 : 1,
+  };
+  const variants = {
+    primary: { background: c.accent, color: '#fff', boxShadow: '0 1px 0 rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.18)' },
+    default: { background: c.chipBg, color: c.text, boxShadow: 'inset 0 0 0 0.5px ' + c.border },
+    ghost:   { background: 'transparent', color: c.text },
+    danger:  { background: c.danger, color: '#fff' },
+  };
+  return (
+    <button onClick={disabled ? undefined : onClick} disabled={disabled}
+      style={{ ...base, ...variants[danger ? 'danger' : kind], ...style }}>
+      {icon}{children}
+    </button>
+  );
+}
+
+// monospace block for hashes / IDs
+function Mono({ children, label, full, style = {} }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, ...style }}>
+      {label && <span style={{ fontSize: ds.fs.xs, color: c.textFaint, fontWeight: 500, letterSpacing: '0.02em', textTransform: 'uppercase' }}>{label}</span>}
+      <code style={{
+        font: ds.fs.s + 'px ' + ds.mono, color: c.text,
+        background: c.code, padding: '4px 8px', borderRadius: 6,
+        wordBreak: full ? 'break-all' : 'normal', whiteSpace: full ? 'normal' : 'nowrap',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{children}</code>
+    </div>
+  );
+}
+
+// reveal-toggle for sensitive attribute values
+function Veil({ value, sensitive, hidden }) {
+  const ds = useDS(); const c = colors(ds);
+  const [show, setShow] = React.useState(!sensitive);
+  if (!sensitive) return <span style={{ color: c.text }}>{value}</span>;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span style={{
+        color: c.text, font: 'inherit',
+        filter: show ? 'none' : 'blur(5px)',
+        transition: 'filter 0.18s',
+        userSelect: show ? 'text' : 'none',
+      }}>{value}</span>
+      <button onClick={() => setShow((s) => !s)} style={{
+        appearance: 'none', border: 0, background: 'transparent', cursor: 'pointer',
+        color: c.textFaint, padding: 0, fontSize: ds.fs.s,
+      }}>{show ? '隐藏' : '查看'}</button>
+    </span>
+  );
+}
+
+// ─── ZK seal — the signature visual ───────────────────────────────
+// Three rings rotating slowly (very slowly, calm) with a hexagonal core.
+// Strength dialed by the zkLevel tweak.
+function ZKSeal({ size = 64, animated = true, level = 'rich' }) {
+  const ds = useDS(); const c = colors(ds);
+  const minimal = level === 'minimal';
+  const rich = level === 'rich';
+  return (
+    <div style={{
+      width: size, height: size, position: 'relative', flexShrink: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <style>{`
+        @keyframes zk-spin-cw { to { transform: rotate(360deg); } }
+        @keyframes zk-spin-ccw { to { transform: rotate(-360deg); } }
+        @keyframes zk-pulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.5; } }
+      `}</style>
+      <svg viewBox="-50 -50 100 100" width={size} height={size}>
+        {rich && (
+          <g style={{ animation: animated ? 'zk-spin-cw 26s linear infinite' : 'none', transformOrigin: 'center' }}>
+            <circle r="46" fill="none" stroke={c.accent} strokeOpacity="0.18" strokeWidth="0.5"
+              strokeDasharray="2 4" />
+          </g>
+        )}
+        {!minimal && (
+          <g style={{ animation: animated ? 'zk-spin-ccw 18s linear infinite' : 'none', transformOrigin: 'center' }}>
+            <circle r="38" fill="none" stroke={c.accent} strokeOpacity="0.32" strokeWidth="0.6" />
+            <circle r="38" cx="0" cy="0" fill={c.accent} r="2" transform="translate(0 -38)" />
+            <circle r="38" cx="0" cy="0" fill={c.accent} r="1.4" opacity="0.5" transform="translate(33 19)" />
+          </g>
+        )}
+        <g style={{ animation: animated && !minimal ? 'zk-spin-cw 22s linear infinite' : 'none', transformOrigin: 'center' }}>
+          <polygon
+            points="0,-26 22.5,-13 22.5,13 0,26 -22.5,13 -22.5,-13"
+            fill="none" stroke={c.accent} strokeOpacity="0.7" strokeWidth="1" />
+        </g>
+        {/* core */}
+        <g>
+          <polygon
+            points="0,-14 12,-7 12,7 0,14 -12,7 -12,-7"
+            fill={c.accent} fillOpacity="0.15" stroke={c.accent} strokeWidth="1.2" />
+          <text x="0" y="4" textAnchor="middle"
+            fill={c.accent} fontSize="11" fontWeight="700"
+            fontFamily={ds.mono}>ZK</text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+// circuit-constraint progress visualization
+const CIRCUIT_CONSTRAINTS = [
+  { id: '①', label: 'MSO 哈希正确', ms: 90 },
+  { id: '②', label: 'MSO 提取属性哈希', ms: 60 },
+  { id: '③', label: '属性值绑定加盐哈希', ms: 80 },
+  { id: '④', label: '提取设备公钥', ms: 70 },
+  { id: '⑤', label: '凭证有效期检查', ms: 30 },
+  { id: '⑥', label: '颁发方签名 SM2 验证', ms: 320 },
+  { id: '⑦', label: '设备对 Agent 委托签名', ms: 280 },
+  { id: '⑧', label: '策略允许该属性披露', ms: 40 },
+  { id: '⑨', label: '委托未过期', ms: 30 },
+  { id: '⑩', label: 'Agent 会话签名 (防重放)', ms: 280 },
+  { id: '⑪', label: 'Agent 未在撤销列表', ms: 360 },
+];
+
+window.useDS = useDS;
+window.colors = colors;
+window.DensityCtx = DensityCtx;
+window.ThemeCtx = ThemeCtx;
+window.Pill = Pill;
+window.Btn = Btn;
+window.Mono = Mono;
+window.Veil = Veil;
+window.ZKSeal = ZKSeal;
+window.CIRCUIT_CONSTRAINTS = CIRCUIT_CONSTRAINTS;
+
+
+
+// ===== panels-delegator.jsx =====
+// panels-delegator.jsx — delegator-mode panels (Agents, Wallet, Inbox, Sessions, Delegations)
+
+// (panels-delegator uses window.* directly to avoid redeclaration)
+
+// ─── Page header ────────────────────────────────────────────────
+function PageHeader({ title, subtitle, actions }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+      gap: ds.sp.l, padding: `${ds.sp.l}px ${ds.sp.xl}px ${ds.sp.m}px`,
+      borderBottom: '0.5px solid ' + c.borderSoft,
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ fontSize: ds.fs.hh, fontWeight: 600, color: c.text, letterSpacing: '-0.01em' }}>{title}</div>
+        {subtitle && <div style={{ fontSize: ds.fs.m, color: c.textSub }}>{subtitle}</div>}
+      </div>
+      <div style={{ display: 'flex', gap: ds.sp.s }}>{actions}</div>
+    </div>
+  );
+}
+
+// ═══ Agents panel ════════════════════════════════════════════════
+function AgentsPanel({ onPickAgent, onNewDelegation }) {
+  const ds = useDS(); const c = colors(ds);
+  const agents = window.MOCK_AGENTS;
+  const dels = window.MOCK_DELEGATIONS;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+      <PageHeader
+        title="我的 Agent"
+        subtitle="管理 AI 代理人 · 配置技能 · 查看委托"
+        actions={<Btn kind="primary" onClick={() => onNewDelegation()}>新建委托</Btn>}
+      />
+      <div style={{
+        flex: 1, overflow: 'auto', padding: ds.sp.xl,
+        display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: ds.sp.l, alignContent: 'start',
+      }}>
+        {agents.map((a) => {
+          const myDels = dels.filter((d) => d.agentId === a.id && d.status === 'active');
+          return (
+            <div key={a.id} onClick={() => onPickAgent(a.id)} style={{
+              background: c.bgPanel, borderRadius: 14,
+              padding: ds.sp.l, cursor: 'pointer',
+              border: '0.5px solid ' + c.border,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              display: 'flex', flexDirection: 'column', gap: ds.sp.m,
+              transition: 'transform 0.12s, box-shadow 0.12s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.03)'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: ds.sp.m }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 12,
+                  background: a.color, color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 22, fontWeight: 600, flexShrink: 0,
+                }}>{a.avatar}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: ds.fs.l, fontWeight: 600, color: c.text }}>{a.name}</div>
+                  <div style={{ fontSize: ds.fs.s, color: c.textSub, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%',
+                      background: a.status === 'online' ? c.success : a.status === 'idle' ? c.warn : c.textFaint,
+                    }}></span>
+                    {a.status === 'online' ? '在线' : a.status === 'idle' ? '空闲' : '离线'} · {a.lastActive}
+                  </div>
+                </div>
+                <Pill tone={myDels.length > 0 ? 'accent' : 'neutral'}>
+                  {myDels.length} 项委托
+                </Pill>
+              </div>
+              <div style={{ fontSize: ds.fs.m, color: c.textSub, lineHeight: 1.55 }}>{a.desc}</div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {a.skills.map((s) => <Pill key={s}>{s}</Pill>)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ═══ Agent detail / chat ════════════════════════════════════════
+function AgentChat({ agentId, onBack, onNewDelegation, onDispatch }) {
+  const ds = useDS(); const c = colors(ds);
+  const a = window.MOCK_AGENTS.find((x) => x.id === agentId);
+  const activeDels = window.MOCK_DELEGATIONS.filter((d) => d.agentId === agentId && d.status === 'active');
+  // The active delegation actually used to dispatch. Default to the most-recently
+  // created (which is what the wizard prepends). User can switch via the chip row.
+  const [activeDelId, setActiveDelId] = React.useState(activeDels[0] ? activeDels[0].id : null);
+  const activeDel = activeDels.find(d => d.id === activeDelId) || activeDels[0] || null;
+  const [input, setInput] = React.useState('');
+  const [dispatching, setDispatching] = React.useState(false);
+  const [messages, setMessages] = React.useState([
+    { role: 'agent', text: `您好，我是「${a ? a.name : agentId}」。请把要预订的商品名写进消息，例如「帮我订一下外滩璞丽酒店」，我会按您当前选中的委托代您出示零知识证明并下单。` },
+  ]);
+  const endRef = React.useRef(null);
+  React.useEffect(() => { endRef.current && endRef.current.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  // Keep activeDelId in sync if the wizard adds/removes delegations while chat is open.
+  React.useEffect(() => {
+    if (!activeDels.find(d => d.id === activeDelId)) {
+      setActiveDelId(activeDels[0] ? activeDels[0].id : null);
+    }
+  }, [window.MOCK_DELEGATIONS.length]);
+
+  // Match a hotel by checking whether the user's message contains its name.
+  // Returns the matched hotel object, or null if nothing matched.
+  const matchHotel = (text, hotels) => {
+    if (!Array.isArray(hotels)) return null;
+    for (const h of hotels) {
+      if (h && h.name && text.includes(h.name)) return h;
+    }
+    return null;
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || dispatching) return;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text }]);
+    setDispatching(true);
+    try {
+      const hotels = await (await fetch('/api/catalog')).json();
+      const hotel = matchHotel(text, hotels);
+      if (!hotel) {
+        // No hotel name in the message — don't dispatch. Ask the user to be specific.
+        const names = (Array.isArray(hotels) ? hotels : []).map(h => '「' + h.name + '」').join('、');
+        setMessages(prev => [...prev, {
+          role: 'agent',
+          text: '没有从您的消息里识别到具体商品。请把您想预订的酒店名写进对话，例如：' + (names || '「外滩璞丽酒店」'),
+        }]);
+        return;
+      }
+      // Hard requirement: must have at least one active delegation. Otherwise
+      // the agent has no policy to obey and we should refuse to dispatch.
+      if (!activeDel) {
+        setMessages(prev => [...prev, {
+          role: 'agent', kind: 'error',
+          text: '无可用委托。请先在右上角点「修改权限」创建一个委托，再让我代为下单。',
+        }]);
+        return;
+      }
+      // The actual claim set we present is whatever the user authorized in the
+      // selected delegation's policy — NOT a hardcoded list. If the user took
+      // age_over_18 out of the policy, the dispatch goes out without it, and
+      // 18+ hotels will be rejected by the merchant business rule (server-side).
+      const claimsToProve = (activeDel.policy && activeDel.policy.allowed_claims) || [];
+      const willCoverAge = !hotel.age || claimsToProve.includes('age_over_18');
+      setMessages(prev => [...prev,
+        {
+          role: 'agent', kind: 'authReq',
+          text: `识别到酒店「${hotel.name}」（¥${hotel.price}/晚${hotel.age ? ' · 18+' : ''}）。我将使用委托 ${activeDel.id}，本次披露的属性为：${claimsToProve.length > 0 ? claimsToProve.join(', ') : '(空)'}${hotel.age && !willCoverAge ? ' · ⚠ 该酒店要求 age_over_18，但当前委托未授权该属性，预计被商家业务规则拒绝' : ''}。`,
+        },
+        { role: 'agent', text: '正在生成 ZK 委托证明并跨服务投递订单...', kind: 'system' },
+      ]);
+      // Use the delegation's actual expiry. Robust against mock formats:
+      // wizard saves "2026-05-17T08:55:09", mock has "2026-05-28 14:32".
+      let expires = null;
+      if (activeDel.expiresAt) {
+        const d = new Date(activeDel.expiresAt.replace(' ', 'T'));
+        if (!isNaN(d.getTime())) expires = d.toISOString().slice(0, 19) + 'Z';
+      }
+      if (!expires) expires = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 19) + 'Z';
+      const r = await fetch('/api/agent/dispatch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hotel_id: hotel.id,
+          checkin: '2026-05-10', checkout: '2026-05-12',
+          claims: claimsToProve, expires, agent_id: agentId,
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 120));
+      const { task_id } = await r.json();
+      onDispatch && onDispatch(task_id, hotel.name);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'agent', text: '出错了：' + String(e), kind: 'error' }]);
+    } finally {
+      setDispatching(false);
+    }
+  };
+
+  const handleKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: ds.sp.m,
+        padding: `${ds.sp.m}px ${ds.sp.xl}px`,
+        borderBottom: '0.5px solid ' + c.borderSoft,
+      }}>
+        <Btn kind="ghost" onClick={onBack} style={{ padding: '4px 8px' }}>← 返回</Btn>
+        <div style={{
+          width: 32, height: 32, borderRadius: 9,
+          background: a ? a.color : c.accent, color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16, fontWeight: 600,
+        }}>{a ? a.avatar : '?'}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: ds.fs.l, fontWeight: 600, color: c.text }}>{a ? a.name : agentId}</div>
+          <div style={{ fontSize: ds.fs.s, color: c.textSub }}>
+            {activeDels.length} 项有效委托 · 技能：{a ? a.skills.join('、') : '—'}
+          </div>
+        </div>
+        <Btn kind="default" onClick={() => onNewDelegation(agentId)}>修改权限</Btn>
+      </div>
+
+      {/* Delegation selector — picks which active delegation governs the next dispatch */}
+      {activeDels.length > 0 && (
+        <div style={{
+          padding: `${ds.sp.s}px ${ds.sp.xl}px`,
+          borderBottom: '0.5px solid ' + c.borderSoft,
+          background: c.chipBg,
+          display: 'flex', alignItems: 'center', gap: ds.sp.s, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: ds.fs.xs, color: c.textFaint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            使用委托
+          </span>
+          {activeDels.map(d => {
+            const sel = d.id === activeDel?.id;
+            return (
+              <button key={d.id} onClick={() => setActiveDelId(d.id)} style={{
+                appearance: 'none', border: 0, font: 'inherit', cursor: 'pointer',
+                padding: '4px 10px', borderRadius: 999,
+                background: sel ? c.accent : 'transparent',
+                color: sel ? '#fff' : c.textSub,
+                fontSize: ds.fs.xs, fontFamily: ds.mono,
+                boxShadow: sel ? 'none' : 'inset 0 0 0 0.5px ' + c.border,
+              }} title={'allowed: ' + (d.policy?.allowed_claims || []).join(', ')}>
+                {d.id} · [{(d.policy?.allowed_claims || []).join(', ') || '空'}]
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!activeDel && (
+        <div style={{
+          padding: `${ds.sp.s}px ${ds.sp.xl}px`,
+          borderBottom: '0.5px solid ' + c.borderSoft,
+          background: 'color-mix(in oklab, ' + c.warn + ' 8%, transparent)',
+          color: c.warn, fontSize: ds.fs.s,
+        }}>
+          ⓘ 此 Agent 名下尚无有效委托，发送消息将无法派单。点右上角「修改权限」创建一个。
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl,
+        display: 'flex', flexDirection: 'column', gap: ds.sp.m }}>
+        {messages.map((m, i) => (
+          <ChatBubble key={i} m={m} agent={a} />
+        ))}
+        {dispatching && (
+          <div style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ZKSeal size={22} animated={true} level="rich" />
+            <span style={{ fontSize: ds.fs.s, color: c.textSub }}>Agent 正在处理...</span>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+
+      <div style={{
+        padding: `${ds.sp.m}px ${ds.sp.xl}px ${ds.sp.l}px`,
+        borderTop: '0.5px solid ' + c.borderSoft,
+        display: 'flex', gap: ds.sp.s, alignItems: 'center',
+      }}>
+        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKey}
+          placeholder="发送消息给 Agent..."
+          style={{
+            flex: 1, padding: `${ds.sp.s}px ${ds.sp.m}px`,
+            background: c.chipBg, border: '0.5px solid ' + c.border,
+            borderRadius: 10, fontSize: ds.fs.m, color: c.text,
+            outline: 'none', font: 'inherit',
+          }} />
+        <Btn kind="primary" onClick={handleSend} disabled={dispatching || !input.trim()}>
+          {dispatching ? '...' : '发送'}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+function ChatBubble({ m, agent }) {
+  const ds = useDS(); const c = colors(ds);
+  if (m.kind === 'system' || m.kind === 'error') {
+    const tone = m.kind === 'error' ? c.danger : c.success;
+    return (
+      <div style={{
+        alignSelf: 'center', padding: '6px 12px',
+        background: 'color-mix(in oklab, ' + tone + ' 12%, transparent)',
+        color: tone, borderRadius: 999, fontSize: ds.fs.s,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        {m.kind !== 'error' && <ZKSeal size={20} animated={false} level="minimal" />}
+        {m.text}
+      </div>
+    );
+  }
+  const isUser = m.role === 'user';
+  return (
+    <div style={{
+      display: 'flex', gap: ds.sp.s,
+      flexDirection: isUser ? 'row-reverse' : 'row',
+      maxWidth: '88%',
+      alignSelf: isUser ? 'flex-end' : 'flex-start',
+    }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+        background: isUser ? c.chipBg : (agent ? agent.color : c.accent), color: isUser ? c.text : '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 13, fontWeight: 600,
+      }}>{isUser ? 'A' : (agent ? agent.avatar : '?')}</div>
+      <div style={{
+        background: isUser ? 'color-mix(in oklab, ' + c.accent + ' 12%, transparent)' : c.bgPanel,
+        border: '0.5px solid ' + (isUser ? 'color-mix(in oklab, ' + c.accent + ' 22%, transparent)' : c.border),
+        padding: `${ds.sp.s}px ${ds.sp.m}px`,
+        borderRadius: 12, color: c.text, fontSize: ds.fs.m, lineHeight: 1.55,
+      }}>
+        {m.text}
+        {m.kind === 'authReq' && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+            <Pill tone="accent">需要 · age_over_18</Pill>
+            <Pill>scope · purchase</Pill>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+
+// ═══ Wallet panel ════════════════════════════════════════════════
+function WalletPanel() {
+  const ds = useDS(); const c = colors(ds);
+  const [openId, setOpenId] = React.useState('cred-001');
+  const [walletStatus, setWalletStatus] = React.useState(null);
+  const [reissuing, setReissuing] = React.useState(false);
+  const [toast, setToast] = React.useState(null);
+  const creds = window.MOCK_CREDENTIALS;
+  const cur = creds.find((x) => x.id === openId);
+
+  const refreshStatus = () => fetch('/api/wallet/status').then(r => r.json()).then(setWalletStatus).catch(() => {});
+
+  React.useEffect(() => { refreshStatus(); }, []);
+
+  const handleReissue = async () => {
+    if (reissuing) return;
+    setReissuing(true); setToast(null);
+    try {
+      const r = await fetch('/api/wallet/reissue', { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      await refreshStatus();
+      setToast({ kind: 'ok', msg: '✓ 已重新颁发 mDoc 凭证' });
+    } catch (e) {
+      setToast({ kind: 'err', msg: '颁发失败: ' + String(e) });
+    } finally {
+      setReissuing(false);
+      setTimeout(() => setToast(null), 3500);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader
+        title="凭证钱包"
+        subtitle={walletStatus?.has_mdoc ? `mDoc 已就绪 · ${(walletStatus.claims||[]).length} 个属性 · device_pkx: ${walletStatus.device_pkx || '—'}` : '存放在安全芯片中的可验证凭证 · MSO + 颁发方签名'}
+        actions={<Btn kind="primary" onClick={handleReissue} disabled={reissuing}>{reissuing ? '颁发中…' : '+ 申请新凭证'}</Btn>}
+      />
+      {toast && (
+        <div style={{
+          margin: `0 ${ds.sp.xl}px ${ds.sp.s}px`,
+          padding: `${ds.sp.s}px ${ds.sp.m}px`,
+          background: toast.kind === 'ok' ? 'color-mix(in oklab, ' + c.success + ' 12%, transparent)' : 'color-mix(in oklab, ' + c.danger + ' 12%, transparent)',
+          border: '0.5px solid ' + (toast.kind === 'ok' ? 'color-mix(in oklab, ' + c.success + ' 30%, transparent)' : 'color-mix(in oklab, ' + c.danger + ' 30%, transparent)'),
+          color: toast.kind === 'ok' ? c.success : c.danger,
+          borderRadius: 8, fontSize: ds.fs.s, fontFamily: ds.mono,
+        }}>{toast.msg}</div>
+      )}
+      {walletStatus?.has_mdoc && (
+        <div style={{
+          margin: `0 ${ds.sp.xl}px ${ds.sp.m}px`,
+          padding: `${ds.sp.s}px ${ds.sp.m}px`,
+          background: 'color-mix(in oklab, ' + c.accent + ' 10%, transparent)',
+          border: '0.5px solid color-mix(in oklab, ' + c.accent + ' 30%, transparent)',
+          borderRadius: 10, display: 'flex', alignItems: 'center', gap: ds.sp.m,
+        }}>
+          <ZKSeal size={24} animated={false} level="rich" />
+          <div style={{ flex: 1, fontSize: ds.fs.s, color: c.text }}>
+            <strong>凭证已就绪</strong> · 由 Issuer 签发
+          </div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {(walletStatus.claims || []).map(cl => <Pill key={cl} tone="accent">{cl}</Pill>)}
+          </div>
+        </div>
+      )}
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '320px 1fr', minHeight: 0 }}>
+        <div style={{
+          padding: ds.sp.m, borderRight: '0.5px solid ' + c.borderSoft,
+          overflow: 'auto', display: 'flex', flexDirection: 'column', gap: ds.sp.s,
+        }}>
+          {creds.map((cd) => (
+            <div key={cd.id} onClick={() => setOpenId(cd.id)} style={{
+              padding: ds.sp.m, borderRadius: 12, cursor: 'pointer',
+              background: openId === cd.id ? 'color-mix(in oklab, ' + c.accent + ' 10%, transparent)' : c.bgPanel,
+              border: '0.5px solid ' + (openId === cd.id ? 'color-mix(in oklab, ' + c.accent + ' 30%, transparent)' : c.border),
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: ds.sp.s, marginBottom: 6 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 7, background: c.bg2,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: ds.mono, fontSize: 11, fontWeight: 600, color: c.text,
+                }}>{cd.issuerAbbr}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{cd.type}</div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.issuer}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: ds.fs.xs, color: c.textFaint }}>
+                有效至 {cd.expiresAt} · {cd.id === 'cred-001' && walletStatus ? (walletStatus.claims||[]).length + ' 个属性 (真实)' : cd.attributes.length + ' 个属性'}
+              </div>
+            </div>
+          ))}
+        </div>
+        {cur && <CredentialDetail cd={cur} liveStatus={openId === 'cred-001' ? walletStatus : null} />}
+      </div>
+    </div>
+  );
+}
+
+
+
+function CredentialDetail({ cd, liveStatus }) {
+  const ds = useDS(); const c = colors(ds);
+  const devicePkx = liveStatus?.device_pkx || '04:9a:b2:1f:e8:c4:32:7d:1a:ee:55:0c:11:2d:af:48';
+  const liveClaims = liveStatus?.claims;
+  return (
+    <div style={{ overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.l }}>
+      <div style={{
+        background: 'linear-gradient(135deg, ' + c.accent + ' 0%, color-mix(in oklab, ' + c.accent + ' 70%, #1d1c1a) 100%)',
+        color: '#fff', borderRadius: 16, padding: ds.sp.xl,
+        boxShadow: '0 12px 32px color-mix(in oklab, ' + c.accent + ' 20%, transparent)',
+        position: 'relative', overflow: 'hidden',
+      }}>
+        <div style={{ position: 'absolute', top: -30, right: -30, opacity: 0.18 }}>
+          <ZKSeal size={180} level="rich" animated={true} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: ds.sp.l, position: 'relative' }}>
+          <div>
+            <div style={{ fontSize: ds.fs.s, opacity: 0.7, fontWeight: 500 }}>VERIFIABLE CREDENTIAL · MDOC</div>
+            <div style={{ fontSize: ds.fs.hh, fontWeight: 600, marginTop: 4 }}>{cd.type}</div>
+          </div>
+          <Pill tone="success" style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', border: '0.5px solid rgba(255,255,255,0.25)' }}>
+            ● {liveStatus?.has_mdoc ? '已就绪' : '有效'}
+          </Pill>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: ds.sp.m, fontSize: ds.fs.s, opacity: 0.9, position: 'relative' }}>
+          <div><div style={{ opacity: 0.65, fontSize: ds.fs.xs, marginBottom: 2 }}>颁发方</div>{cd.issuer}</div>
+          <div><div style={{ opacity: 0.65, fontSize: ds.fs.xs, marginBottom: 2 }}>颁发时间</div>{cd.issuedAt}</div>
+          <div><div style={{ opacity: 0.65, fontSize: ds.fs.xs, marginBottom: 2 }}>有效期至</div>{cd.expiresAt}</div>
+          <div><div style={{ opacity: 0.65, fontSize: ds.fs.xs, marginBottom: 2 }}>凭证 ID</div><span style={{ fontFamily: ds.mono }}>{cd.id}</span></div>
+        </div>
+      </div>
+
+      <Section title="属性向量 (a₁, …, aₙ)" hint="每个属性独立加盐哈希，可选择性披露">
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {cd.attributes.map((at, i) => (
+            <div key={at.key} style={{
+              display: 'grid', gridTemplateColumns: '32px 200px 1fr auto',
+              alignItems: 'center', gap: ds.sp.m,
+              padding: `${ds.sp.s}px 0`,
+              borderTop: i === 0 ? 'none' : '0.5px solid ' + c.borderSoft,
+            }}>
+              <span style={{ fontFamily: ds.mono, color: c.textFaint, fontSize: ds.fs.s }}>a{i + 1}</span>
+              <span style={{ color: c.textSub, fontSize: ds.fs.m }}>
+                <code style={{ fontFamily: ds.mono, fontSize: ds.fs.s, color: c.text }}>{at.key}</code>
+                <div style={{ fontSize: ds.fs.xs }}>{at.label}</div>
+              </span>
+              <span style={{ fontSize: ds.fs.m }}><Veil value={at.value} sensitive={at.sensitive} /></span>
+              {liveClaims && liveClaims.includes(at.key)
+                ? <Pill tone="success">● 就绪</Pill>
+                : at.sensitive ? <Pill tone="warn">敏感</Pill> : <Pill tone="success">可披露</Pill>}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="加密学详情" hint="展开看 MSO 与签名">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.m }}>
+          <Mono label="颁发方公钥 ipk" full>04:8a:91:b2:cd:ef:11:33:55:77:99:bb:dd:ff:00:22:44</Mono>
+          <Mono label="颁发方签名 σ_iss" full>{cd.sigPreview}</Mono>
+          <Mono label="设备公钥 pk_d" full>{devicePkx || '04:9a:b2:1f:e8:c4:32:7d:1a:ee:55:0c:11:2d:af:48'}</Mono>
+          <Mono label="MSO 哈希 e₁ = SM3(MSO)" full>0x29 a4 1c b6 ff e8 22 9d 4f a2 13 0c 88 d1 7e 55</Mono>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+
+function Section({ title, hint, children }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{
+      background: c.bgPanel, border: '0.5px solid ' + c.border,
+      borderRadius: 12, padding: ds.sp.l,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: ds.sp.m }}>
+        <div style={{ fontSize: ds.fs.l, fontWeight: 600, color: c.text }}>{title}</div>
+        {hint && <div style={{ fontSize: ds.fs.s, color: c.textFaint }}>{hint}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ═══ Delegations panel ═══════════════════════════════════════════
+function DelegationsPanel({ onOpen, onNewDelegation }) {
+  const ds = useDS(); const c = colors(ds);
+  const dels = window.MOCK_DELEGATIONS;
+  const agents = window.MOCK_AGENTS;
+  const [filter, setFilter] = React.useState('all');
+  const filtered = dels.filter((d) => filter === 'all' ? true : d.status === filter);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader
+        title="委托管理"
+        subtitle="所有已签发的委托凭证 · 撤销句柄 · 出示历史"
+        actions={<Btn kind="primary" onClick={() => onNewDelegation()}>新建委托</Btn>}
+      />
+      <div style={{ padding: `${ds.sp.s}px ${ds.sp.xl}px`, display: 'flex', gap: 4 }}>
+        {[['all', '全部'], ['active', '有效'], ['revoked', '已撤销']].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)} style={{
+            appearance: 'none', border: 0, font: 'inherit',
+            padding: '4px 10px', borderRadius: 7, cursor: 'pointer',
+            background: filter === k ? c.chipBg : 'transparent',
+            color: filter === k ? c.text : c.textSub,
+            fontSize: ds.fs.m, fontWeight: 500,
+          }}>{l}</button>
+        ))}
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: `0 ${ds.sp.xl}px ${ds.sp.xl}px` }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.s }}>
+          {filtered.map((d) => {
+            const a = agents.find((x) => x.id === d.agentId);
+            return (
+              <div key={d.id} onClick={() => onOpen(d.id)} style={{
+                display: 'grid',
+                gridTemplateColumns: '40px 1.4fr 1fr 1fr 0.8fr auto',
+                alignItems: 'center', gap: ds.sp.m,
+                padding: ds.sp.m,
+                background: c.bgPanel, border: '0.5px solid ' + c.border,
+                borderRadius: 12, cursor: 'pointer',
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 9,
+                  background: a.color, color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 17, fontWeight: 600,
+                }}>{a.avatar}</div>
+                <div>
+                  <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{a.name}</div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textFaint, fontFamily: ds.mono }}>{d.id} · rh = {d.rh}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textFaint, marginBottom: 2 }}>允许披露</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {d.policy.allowed_claims.map((cl) => <Pill key={cl}>{cl}</Pill>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textFaint, marginBottom: 2 }}>有效期至</div>
+                  <div style={{ fontSize: ds.fs.m, color: c.text }}>{d.expiresAt.split(' ')[0]}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textFaint, marginBottom: 2 }}>已出示</div>
+                  <div style={{ fontSize: ds.fs.m, color: c.text }}>{d.presentationCount} 次</div>
+                </div>
+                {d.status === 'active'
+                  ? <Pill tone="success">● 有效</Pill>
+                  : <Pill tone="danger">● 已撤销</Pill>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ Delegation detail ═══════════════════════════════════════════
+function DelegationDetail({ delId, onBack }) {
+  const ds = useDS(); const c = colors(ds);
+  const d = window.MOCK_DELEGATIONS.find((x) => x.id === delId);
+  const a = window.MOCK_AGENTS.find((x) => x.id === d.agentId);
+  const cd = window.MOCK_CREDENTIALS.find((x) => x.id === d.credentialId);
+  const sessions = window.MOCK_SESSIONS.filter((s) => s.delegationId === delId);
+  const [confirming, setConfirming] = React.useState(false);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: ds.sp.m,
+        padding: `${ds.sp.m}px ${ds.sp.xl}px`,
+        borderBottom: '0.5px solid ' + c.borderSoft,
+      }}>
+        <Btn kind="ghost" onClick={onBack} style={{ padding: '4px 8px' }}>← 返回</Btn>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: ds.fs.h, fontWeight: 600, color: c.text }}>委托详情 · {d.id}</div>
+          <div style={{ fontSize: ds.fs.s, color: c.textSub }}>{a.name} · 凭证 {cd.type}</div>
+        </div>
+        {d.status === 'active' && <Btn danger onClick={() => setConfirming(true)}>撤销委托</Btn>}
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.l }}>
+        {/* Trust chain */}
+        <Section title="信任链" hint="每一层签名都被 ZK 电路内验证">
+          <TrustChainViz cd={cd} a={a} d={d} />
+        </Section>
+
+        {/* Policy */}
+        <Section title="委托策略 (policy)" hint="超出策略范围的请求 ZK 电路将拒绝生成证明">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: ds.sp.m, fontSize: ds.fs.m }}>
+            <PolicyRow label="允许披露的属性" value={d.policy.allowed_claims.join(', ')} />
+            <PolicyRow label="允许的操作" value={d.policy.allowed_scopes.join(', ')} />
+            <PolicyRow label="单笔金额上限" value={d.policy.max_amount + ' ' + d.policy.currency} muted="（私有，验证者不可见）" />
+            <PolicyRow label="允许的验证者" value={d.policy.verifiers.join(', ')} />
+            <PolicyRow label="生效时间" value={d.createdAt} />
+            <PolicyRow label="过期时间" value={d.expiresAt} />
+          </div>
+        </Section>
+
+        {/* Crypto details */}
+        <Section title="密码学详情">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.m }}>
+            <Mono label="撤销句柄 rh = SM3(pk_agent)" full>{d.rh}</Mono>
+            <Mono label="Agent 临时公钥 pk_agent" full>{d.pkAgent}</Mono>
+            <Mono label="设备签名 σ_del" full>0x9c af 21 e0 88 13 4f a1 99 c2 0d 4b 7e 55 88 91</Mono>
+            <Mono label="凭证 ID" full>{cd.id}</Mono>
+          </div>
+        </Section>
+
+        {/* Session history */}
+        <Section title={`出示历史 (${sessions.length})`} hint="该委托被使用产生 ZK 证明的记录">
+          {sessions.length === 0
+            ? <div style={{ color: c.textFaint, fontSize: ds.fs.m }}>暂无出示记录</div>
+            : <SessionList sessions={sessions} />}
+        </Section>
+      </div>
+
+      {confirming && <RevokeDialog d={d} onClose={() => setConfirming(false)} />}
+    </div>
+  );
+}
+
+function PolicyRow({ label, value, muted }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div>
+      <div style={{ fontSize: ds.fs.xs, color: c.textFaint, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: ds.fs.m, color: c.text }}>
+        {value}
+        {muted && <span style={{ color: c.textFaint, marginLeft: 6, fontSize: ds.fs.xs }}>{muted}</span>}
+      </div>
+    </div>
+  );
+}
+
+function TrustChainViz({ cd, a, d }) {
+  const ds = useDS(); const c = colors(ds);
+  const nodes = [
+    { label: '颁发方', subtext: cd.issuer, sigBy: 'ipk', icon: '⛨' },
+    { label: '凭证 cred', subtext: 'MSO + σ_iss', sigBy: 'σ_iss', icon: '◫' },
+    { label: '委托人设备', subtext: 'pk_d (安全芯片)', sigBy: 'σ_del', icon: '⌂' },
+    { label: 'Agent 临时密钥', subtext: 'pk_agent · ' + a.name, sigBy: 'σ_agent', icon: a.avatar },
+    { label: '会话抄本 tr', subtext: '本次 verifier 挑战', sigBy: '—', icon: '⟶' },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, overflowX: 'auto' }}>
+      {nodes.map((n, i) => (
+        <React.Fragment key={i}>
+          <div style={{
+            flex: 1, minWidth: 130,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            padding: ds.sp.s,
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12,
+              background: c.bg2, color: c.text,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 20,
+              border: '0.5px solid ' + c.border,
+            }}>{n.icon}</div>
+            <div style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.text, textAlign: 'center' }}>{n.label}</div>
+            <div style={{ fontSize: ds.fs.xs, color: c.textFaint, textAlign: 'center' }}>{n.subtext}</div>
+          </div>
+          {i < nodes.length - 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minWidth: 50, padding: '0 4px' }}>
+              <div style={{ fontSize: ds.fs.xs, color: c.accent, fontFamily: ds.mono, marginBottom: 2 }}>签名</div>
+              <svg width="60" height="14" viewBox="0 0 60 14">
+                <line x1="2" y1="7" x2="50" y2="7" stroke={c.accent} strokeWidth="1.2" strokeDasharray="3 2" />
+                <polygon points="50,3 58,7 50,11" fill={c.accent} />
+              </svg>
+            </div>
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function RevokeDialog({ d, onClose }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.32)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 10,
+    }}>
+      <div style={{
+        width: 440, background: c.bg, borderRadius: 14,
+        padding: ds.sp.xl, boxShadow: '0 16px 64px rgba(0,0,0,0.32)',
+        border: '0.5px solid ' + c.border,
+      }}>
+        <div style={{ fontSize: ds.fs.h, fontWeight: 600, color: c.text, marginBottom: 8 }}>
+          撤销委托？
+        </div>
+        <div style={{ fontSize: ds.fs.m, color: c.textSub, lineHeight: 1.6, marginBottom: ds.sp.l }}>
+          撤销后，撤销句柄 <code style={{ fontFamily: ds.mono, fontSize: ds.fs.s }}>{d.rh}</code> 将被写入链上 Merkle 树，
+          所有此后的证明都会因约束⑪非成员证明失败而被验证者拒绝。
+        </div>
+        <Mono label="将提交到 RS 的撤销句柄" full>{d.rh}</Mono>
+        <div style={{
+          marginTop: ds.sp.m, padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+          background: 'color-mix(in oklab, ' + c.warn + ' 10%, transparent)',
+          border: '0.5px solid color-mix(in oklab, ' + c.warn + ' 30%, transparent)',
+          borderRadius: 8, fontSize: ds.fs.s, color: c.warn,
+        }}>
+          ⓘ 撤销服务（链上 Merkle 树）暂未在演示后端实现
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: ds.sp.s, marginTop: ds.sp.l }}>
+          <Btn kind="default" onClick={onClose}>关闭</Btn>
+          <Btn danger disabled>撤销服务暂未接入</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ Sessions panel ════════════════════════════════════════════════
+
+// ═══ Sessions panel ════════════════════════════════════════════════
+function SessionsPanel({ onOpen }) {
+  const ds = useDS(); const c = colors(ds);
+  const [sessions, setSessions] = React.useState(window.MOCK_SESSIONS);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    fetch('/api/agent/history').then(r => r.json()).then(tasks => {
+      if (!Array.isArray(tasks) || tasks.length === 0) { setLoading(false); return; }
+      const realSessions = tasks
+        .filter(t => t.status === 'done' && t.result)
+        .map((t, i) => ({
+          id: 'ses-' + t.task_id,
+          delegationId: 'del-78a3',
+          verifier: 'tripgo.local',
+          verifierLabel: 'TripGo · ' + (t.result?.hotel_name || '酒店'),
+          timestamp: t.started_at || '—',
+          claims: ['age_over_18 = true'],
+          proofSize: t.result?.proof_size ? (t.result.proof_size / 1024).toFixed(1) + ' KB' : '~350 KB',
+          proofTime: '—',
+          status: t.result?.accepted ? 'accepted' : 'rejected',
+          nonce: t.task_id.slice(0, 10) + '…',
+          proofPreview: '—',
+        }));
+      if (realSessions.length > 0) setSessions([...realSessions, ...window.MOCK_SESSIONS]);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader title="ZK 证明日志" subtitle="所有 Agent 出示的零知识证明记录" />
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl }}>
+        {loading
+          ? <div style={{ color: c.textFaint, fontSize: ds.fs.m }}>加载中...</div>
+          : <SessionList sessions={sessions} onOpen={onOpen} expanded />}
+      </div>
+    </div>
+  );
+}
+
+
+function SessionList({ sessions, onOpen, expanded }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.s }}>
+      {sessions.map((s) => (
+        <div key={s.id} onClick={() => onOpen && onOpen(s.id)} style={{
+          padding: ds.sp.m, borderRadius: 10,
+          background: 'transparent',
+          border: '0.5px solid ' + c.borderSoft,
+          display: 'grid', gridTemplateColumns: '32px 1fr auto auto',
+          alignItems: 'center', gap: ds.sp.m,
+          cursor: onOpen ? 'pointer' : 'default',
+        }}>
+          <ZKSeal size={28} animated={false} level="rich" />
+          <div>
+            <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{s.verifierLabel || s.verifier}</div>
+            <div style={{ fontSize: ds.fs.xs, color: c.textFaint, fontFamily: ds.mono }}>
+              {s.timestamp} · nonce {s.nonce} · {s.proofSize} · {s.proofTime}ms
+            </div>
+            {expanded && (
+              <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
+                {s.claims.map((cl) => <Pill key={cl} tone="accent">{cl}</Pill>)}
+              </div>
+            )}
+          </div>
+          {s.status === 'accepted'
+            ? <Pill tone="success">✓ 验证通过</Pill>
+            : <Pill tone="danger">✕ 拒绝</Pill>}
+          <span style={{ color: c.textFaint, fontSize: ds.fs.l }}>›</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══ Inbox panel ═══════════════════════════════════════════════════
+function InboxPanel({ onChallenge }) {
+  const ds = useDS(); const c = colors(ds);
+  const items = window.MOCK_INBOX;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader title="收件箱" subtitle="来自验证者的挑战 · 颁发方通知 · 撤销服务回执" />
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.s }}>
+        {items.map((it) => (
+          <div key={it.id} style={{
+            padding: ds.sp.m, borderRadius: 12,
+            background: c.bgPanel, border: '0.5px solid ' + c.border,
+            display: 'grid', gridTemplateColumns: '36px 1fr auto', gap: ds.sp.m, alignItems: 'flex-start',
+          }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 9,
+              background: it.type === 'challenge' ? 'color-mix(in oklab, ' + c.accent + ' 14%, transparent)' : c.bg2,
+              color: it.type === 'challenge' ? c.accent : c.text,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 15, fontWeight: 700, fontFamily: ds.mono,
+            }}>
+              {it.type === 'challenge' ? '?' : 'i'}
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                <span style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{it.title}</span>
+                {it.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.accent }}></span>}
+              </div>
+              <div style={{ fontSize: ds.fs.s, color: c.textSub, marginBottom: 4 }}>
+                来自 {it.fromLabel} · {it.timestamp}
+              </div>
+              <div style={{ fontSize: ds.fs.m, color: c.text, lineHeight: 1.5 }}>{it.body}</div>
+              {it.requiredClaims && (
+                <div style={{ marginTop: 8, display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: ds.fs.xs, color: c.textFaint }}>需要披露:</span>
+                  {it.requiredClaims.map((cl) => <Pill key={cl} tone="accent">{cl}</Pill>)}
+                  <span style={{ fontSize: ds.fs.xs, color: c.textFaint, marginLeft: 6 }}>nonce: <code style={{ fontFamily: ds.mono }}>{it.nonce}</code></span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+              {it.type === 'challenge' && <Btn kind="primary" onClick={() => onChallenge(it.id)}>处理 →</Btn>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+window.AgentsPanel = AgentsPanel;
+window.AgentChat = AgentChat;
+window.WalletPanel = WalletPanel;
+window.DelegationsPanel = DelegationsPanel;
+window.DelegationDetail = DelegationDetail;
+window.SessionsPanel = SessionsPanel;
+window.InboxPanel = InboxPanel;
+window.PageHeader = PageHeader;
+window.Section = Section;
+window.SessionList = SessionList;
+
+
+
+// ===== panels-flow.jsx =====
+// panels-flow.jsx — Delegation wizard + ZK proving overlay + Agent-mode panels
+
+// (panels-flow uses window.* directly to avoid redeclaration)
+
+// ═══ Delegation wizard ═══════════════════════════════════════════
+// 4 steps: pick agent → pick credential & claims → set policy → confirm/sign
+function DelegationWizard({ initialAgentId, onClose, onCreated, onSave }) {
+  const ds = useDS(); const c = colors(ds);
+  const [step, setStep] = React.useState(0);
+  const [agentId, setAgentId] = React.useState(initialAgentId || 'agt-bookstore');
+  const [credId, setCredId] = React.useState('cred-001');
+  const [claims, setClaims] = React.useState(['age_over_18']);
+  const [scopes, setScopes] = React.useState(['purchase']);
+  const [maxAmount, setMaxAmount] = React.useState(1000);
+  const [days, setDays] = React.useState(30);
+  const [verifiers, setVerifiers] = React.useState('*.tripgo.local');
+  const [signing, setSigning] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [walletClaims, setWalletClaims] = React.useState(null);
+  const [hotels, setHotels] = React.useState([]);
+  const [hotelId, setHotelId] = React.useState(null);
+
+  React.useEffect(() => {
+    fetch('/api/wallet/status').then(r => r.json()).then(s => {
+      if (Array.isArray(s.claims) && s.claims.length > 0) {
+        setWalletClaims(s.claims);
+        setClaims(s.claims.includes('age_over_18') ? ['age_over_18'] : [s.claims[0]]);
+      }
+    }).catch(() => {});
+    fetch('/api/catalog').then(r => r.json()).then(hs => {
+      if (Array.isArray(hs) && hs.length > 0) {
+        setHotels(hs);
+        setHotelId(hs[0].id);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const a = window.MOCK_AGENTS.find((x) => x.id === agentId);
+  const cd = window.MOCK_CREDENTIALS.find((x) => x.id === credId);
+  const hotel = hotels.find((h) => h.id === hotelId);
+
+  const next = () => setStep((s) => s + 1);
+  const prev = () => setStep((s) => s - 1);
+
+  const finish = async () => {
+    if (claims.length === 0) { setError('请至少选择一个允许披露的属性'); return; }
+    setSigning(true); setError(null);
+    try {
+      // Simulate the device signing the policy locally — no network call.
+      // The new delegation is appended to the user's local delegation list;
+      // it gets actually used (派单) only when the user later sends a chat
+      // message that maps to a hotel.
+      await new Promise(r => setTimeout(r, 600));
+      const expiresIso = new Date(Date.now() + days * 86400000).toISOString().slice(0, 19) + 'Z';
+      const newDel = {
+        id: 'del-' + Math.random().toString(16).slice(2, 6),
+        rh: '0x' + Math.random().toString(16).slice(2, 6) + '…' + Math.random().toString(16).slice(2, 6),
+        agentId, credentialId: credId,
+        createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        expiresAt: expiresIso.replace('T', ' ').replace('Z', ''),
+        status: 'active', presentationCount: 0,
+        policy: {
+          allowed_claims: claims,
+          allowed_scopes: scopes,
+          max_amount: maxAmount,
+          currency: 'CNY',
+          verifiers: verifiers.split(',').map(s => s.trim()).filter(Boolean),
+          target_hotel_id: hotelId,
+          target_hotel_name: hotel ? hotel.name : null,
+        },
+        pkAgent: '04:' + [0,0,0,0,0,0].map(() => Math.random().toString(16).slice(2, 4)).join(':') + ':…',
+      };
+      onSave && onSave(newDel);
+      setSigning(false);
+      onClose();
+      onCreated && onCreated();
+    } catch (e) {
+      setSigning(false);
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.32)',
+      backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 20,
+    }}>
+      <div style={{
+        width: 720, maxHeight: 'calc(100% - 60px)',
+        background: c.bg, borderRadius: 16,
+        boxShadow: '0 24px 80px rgba(0,0,0,0.32)',
+        border: '0.5px solid ' + c.border,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}>
+        {/* header */}
+        <div style={{
+          padding: `${ds.sp.l}px ${ds.sp.xl}px ${ds.sp.m}px`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '0.5px solid ' + c.borderSoft,
+        }}>
+          <div>
+            <div style={{ fontSize: ds.fs.h, fontWeight: 600, color: c.text }}>新建委托</div>
+            <div style={{ fontSize: ds.fs.s, color: c.textSub }}>授权 Agent 在限定范围内代您出示属性</div>
+          </div>
+          <Btn kind="ghost" onClick={onClose} style={{ padding: '4px 10px', fontSize: 18 }}>×</Btn>
+        </div>
+
+        {/* stepper */}
+        <div style={{ display: 'flex', padding: `${ds.sp.m}px ${ds.sp.xl}px`, gap: ds.sp.s }}>
+          {['代理人', '凭证与属性', '策略约束', '签发委托'].map((label, i) => (
+            <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 11,
+                background: i <= step ? c.accent : c.chipBg,
+                color: i <= step ? '#fff' : c.textFaint,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: ds.fs.s, fontWeight: 600, fontFamily: ds.mono,
+              }}>{i + 1}</span>
+              <span style={{ fontSize: ds.fs.s, color: i === step ? c.text : c.textFaint, fontWeight: i === step ? 600 : 500 }}>{label}</span>
+              {i < 3 && <div style={{ flex: 1, height: 1, background: i < step ? c.accent : c.borderSoft, opacity: i < step ? 0.4 : 1 }}></div>}
+            </div>
+          ))}
+        </div>
+
+        {/* body */}
+        <div style={{ flex: 1, overflow: 'auto', padding: `0 ${ds.sp.xl}px ${ds.sp.l}px` }}>
+          {step === 0 && <WStep1 agentId={agentId} setAgentId={setAgentId} />}
+          {step === 1 && <WStep2 cd={cd} credId={credId} setCredId={setCredId} claims={claims} setClaims={setClaims} walletClaims={walletClaims} />}
+          {step === 2 && (
+            <WStep3
+              scopes={scopes} setScopes={setScopes}
+              maxAmount={maxAmount} setMaxAmount={setMaxAmount}
+              days={days} setDays={setDays}
+              verifiers={verifiers} setVerifiers={setVerifiers}
+              hotels={hotels} hotelId={hotelId} setHotelId={setHotelId}
+            />
+          )}
+          {step === 3 && <WStep4 a={a} cd={cd} claims={claims} scopes={scopes} maxAmount={maxAmount} days={days} verifiers={verifiers} hotel={hotel} signing={signing} />}
+          {error && (
+            <div style={{
+              marginTop: ds.sp.m, padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+              background: 'color-mix(in oklab, ' + c.danger + ' 8%, transparent)',
+              border: '0.5px solid color-mix(in oklab, ' + c.danger + ' 30%, transparent)',
+              borderRadius: 8, fontSize: ds.fs.s, color: c.danger, fontFamily: ds.mono, wordBreak: 'break-all',
+            }}>{error}</div>
+          )}
+        </div>
+
+        {/* footer */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: `${ds.sp.m}px ${ds.sp.xl}px ${ds.sp.l}px`,
+          borderTop: '0.5px solid ' + c.borderSoft,
+        }}>
+          <div style={{ fontSize: ds.fs.s, color: c.textFaint }}>
+            {step < 3 && '步骤 ' + (step + 1) + ' / 4'}
+            {step === 3 && !signing && '即将使用设备私钥 sk_d 签署委托并保存到本地'}
+            {signing && '设备签名中…'}
+          </div>
+          <div style={{ display: 'flex', gap: ds.sp.s }}>
+            {step > 0 && !signing && <Btn kind="default" onClick={prev}>上一步</Btn>}
+            {step < 3 && <Btn kind="primary" onClick={next}>下一步</Btn>}
+            {step === 3 && <Btn kind="primary" onClick={finish} disabled={signing}>{signing ? '签署中…' : '签发委托'}</Btn>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WStep1({ agentId, setAgentId }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.s, padding: `${ds.sp.s}px 0` }}>
+      <div style={{ fontSize: ds.fs.m, color: c.textSub, marginBottom: 4 }}>
+        选择要授权的 Agent。委托将绑定到 Agent 的临时密钥 pk_agent。
+      </div>
+      {window.MOCK_AGENTS.map((a) => (
+        <div key={a.id} onClick={() => setAgentId(a.id)} style={{
+          padding: ds.sp.m, borderRadius: 12, cursor: 'pointer',
+          background: agentId === a.id ? 'color-mix(in oklab, ' + c.accent + ' 8%, transparent)' : c.bgPanel,
+          border: '0.5px solid ' + (agentId === a.id ? 'color-mix(in oklab, ' + c.accent + ' 35%, transparent)' : c.border),
+          display: 'flex', alignItems: 'center', gap: ds.sp.m,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10,
+            background: a.color, color: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 18, fontWeight: 600, flexShrink: 0,
+          }}>{a.avatar}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{a.name}</div>
+            <div style={{ fontSize: ds.fs.s, color: c.textSub }}>{a.desc}</div>
+          </div>
+          <span style={{
+            width: 18, height: 18, borderRadius: '50%',
+            border: '1.5px solid ' + (agentId === a.id ? c.accent : c.border),
+            background: agentId === a.id ? c.accent : 'transparent',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {agentId === a.id && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }}></span>}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WStep2({ cd, credId, setCredId, claims, setClaims, walletClaims }) {
+  const ds = useDS(); const c = colors(ds);
+  const toggleClaim = (k) => {
+    setClaims((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
+  };
+  // Prefer real claims from /api/wallet/status — fall back to mock cred attributes
+  const liveSet = walletClaims ? new Set(walletClaims) : null;
+  const items = liveSet
+    ? walletClaims.map((k) => {
+        const m = cd.attributes.find((x) => x.key === k);
+        return m || { key: k, label: k, value: 'true', sensitive: false };
+      })
+    : cd.attributes;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.l, padding: `${ds.sp.s}px 0` }}>
+      <div>
+        <div style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.textFaint, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>选择凭证</div>
+        <select value={credId} onChange={(e) => setCredId(e.target.value)} style={{
+          width: '100%', padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+          background: c.bgPanel, border: '0.5px solid ' + c.border,
+          borderRadius: 8, fontSize: ds.fs.m, color: c.text, font: 'inherit',
+        }}>
+          {window.MOCK_CREDENTIALS.map((x) => (
+            <option key={x.id} value={x.id}>{x.type} · {x.issuer}</option>
+          ))}
+        </select>
+        {liveSet && (
+          <div style={{ fontSize: ds.fs.xs, color: c.success, marginTop: 4 }}>
+            ● 已加载真实 mDoc · 共 {walletClaims.length} 个属性
+          </div>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.textFaint, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+          允许 Agent 披露 (allowed_claims)
+        </div>
+        <div style={{ fontSize: ds.fs.s, color: c.textSub, marginBottom: 8 }}>
+          只有勾选的属性，Agent 可以为其生成 ZK 证明。其它属性即使在凭证中存在，电路约束⑧也将拒绝披露。
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {items.map((at, i) => (
+            <label key={at.key} style={{
+              display: 'grid', gridTemplateColumns: '24px 200px 1fr auto',
+              alignItems: 'center', gap: ds.sp.m,
+              padding: `${ds.sp.s}px 0`,
+              borderTop: i === 0 ? 'none' : '0.5px solid ' + c.borderSoft,
+              cursor: 'pointer',
+            }}>
+              <input type="checkbox" checked={claims.includes(at.key)}
+                onChange={() => toggleClaim(at.key)}
+                style={{ width: 16, height: 16, accentColor: c.accent }} />
+              <code style={{ fontFamily: ds.mono, fontSize: ds.fs.s, color: c.text }}>{at.key}</code>
+              <span style={{ fontSize: ds.fs.m, color: c.textSub }}>
+                {at.label} · <Veil value={at.value} sensitive={at.sensitive} />
+              </span>
+              {at.sensitive
+                ? <Pill tone="warn">敏感</Pill>
+                : <Pill tone="success">可披露</Pill>}
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WStep3({ scopes, setScopes, maxAmount, setMaxAmount, days, setDays, verifiers, setVerifiers, hotels, hotelId, setHotelId }) {
+  const ds = useDS(); const c = colors(ds);
+  const allScopes = [
+    ['purchase', '购买（下单/支付）'],
+    ['booking', '预订（酒店/票务）'],
+    ['lookup', '只读查询'],
+    ['discount_lookup', '优惠资格查询'],
+  ];
+  const toggleScope = (s) => setScopes((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.l, padding: `${ds.sp.s}px 0` }}>
+      <Field label="允许的操作 (allowed_scopes)">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+          {allScopes.map(([s, label]) => (
+            <label key={s} style={{
+              padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+              background: scopes.includes(s) ? 'color-mix(in oklab, ' + c.accent + ' 10%, transparent)' : c.chipBg,
+              border: '0.5px solid ' + (scopes.includes(s) ? 'color-mix(in oklab, ' + c.accent + ' 35%, transparent)' : 'transparent'),
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: ds.fs.m, color: c.text,
+            }}>
+              <input type="checkbox" checked={scopes.includes(s)} onChange={() => toggleScope(s)}
+                style={{ accentColor: c.accent }} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.l }}>
+        <Field label="单笔金额上限 (max_amount)" hint="私有，验证者不可见">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="range" min="0" max="10000" step="100" value={maxAmount}
+              onChange={(e) => setMaxAmount(+e.target.value)} style={{ flex: 1, accentColor: c.accent }} />
+            <span style={{ fontFamily: ds.mono, fontSize: ds.fs.m, color: c.text, minWidth: 80, textAlign: 'right' }}>¥ {maxAmount}</span>
+          </div>
+        </Field>
+
+        <Field label="有效期 (expires)">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="range" min="1" max="365" step="1" value={days}
+              onChange={(e) => setDays(+e.target.value)} style={{ flex: 1, accentColor: c.accent }} />
+            <span style={{ fontFamily: ds.mono, fontSize: ds.fs.m, color: c.text, minWidth: 80, textAlign: 'right' }}>{days} 天</span>
+          </div>
+        </Field>
+      </div>
+
+      <Field label="允许的验证者 (verifier 域名 / 通配符)" hint="逗号分隔；空表示不限">
+        <input value={verifiers} onChange={(e) => setVerifiers(e.target.value)} style={{
+          width: '100%', padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+          background: c.bgPanel, border: '0.5px solid ' + c.border,
+          borderRadius: 8, fontSize: ds.fs.m, color: c.text, font: 'inherit',
+          fontFamily: ds.mono,
+        }} />
+      </Field>
+
+      {Array.isArray(hotels) && hotels.length > 0 && (
+        <Field label="目标商品 (hotel_id)" hint="本次委托派发到 TripGo 的具体商品">
+          <select value={hotelId || ''} onChange={(e) => setHotelId(e.target.value)} style={{
+            width: '100%', padding: ds.sp.s + 'px ' + ds.sp.m + 'px',
+            background: c.bgPanel, border: '0.5px solid ' + c.border,
+            borderRadius: 8, fontSize: ds.fs.m, color: c.text, font: 'inherit',
+          }}>
+            {hotels.map((h) => (
+              <option key={h.id} value={h.id}>{h.name} · ¥{h.price}/晚 · {h.loc}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+    </div>
+  );
+}
+
+function WStep4({ a, cd, claims, scopes, maxAmount, days, verifiers, hotel, signing }) {
+  const ds = useDS(); const c = colors(ds);
+  const expiresIso = new Date(Date.now() + days * 86400000).toISOString().slice(0, 19) + 'Z';
+  const policyJson = JSON.stringify({
+    allowed_claims: claims,
+    allowed_scopes: scopes,
+    max_amount: maxAmount,
+    currency: 'CNY',
+    expires: expiresIso,
+    verifiers: verifiers.split(',').map((s) => s.trim()).filter(Boolean),
+    agent_id: a.id,
+    target_hotel: hotel ? { id: hotel.id, name: hotel.name } : null,
+  }, null, 2);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.l, padding: `${ds.sp.s}px 0` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: ds.sp.m, padding: ds.sp.m, borderRadius: 12, background: c.bgPanel, border: '0.5px solid ' + c.border }}>
+        <ZKSeal size={56} animated={signing} level="rich" />
+        <div>
+          <div style={{ fontSize: ds.fs.l, fontWeight: 600, color: c.text }}>
+            {signing ? '签署中…' : '即将签发委托'}
+          </div>
+          <div style={{ fontSize: ds.fs.s, color: c.textSub, lineHeight: 1.6 }}>
+            {signing
+              ? 'Secure Enclave 正在用 sk_d 签署委托'
+              : '使用设备私钥 sk_d 对 SM3(pk_agent ‖ Encode(policy)) 签名，委托保存后 Agent 仅在你后续发起对话时才会派单'}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.m }}>
+        <Mono label="代理人">{a.name} ({a.id})</Mono>
+        <Mono label="凭证">{cd.type}</Mono>
+        <Mono label="允许披露" full>{claims.join(', ')}</Mono>
+        <Mono label="允许操作" full>{scopes.join(', ')}</Mono>
+        {hotel && <Mono label="目标商品" full>{hotel.name} · ¥{hotel.price}</Mono>}
+        <Mono label="过期时间" full>{expiresIso}</Mono>
+      </div>
+
+      <div>
+        <div style={{ fontSize: ds.fs.xs, color: c.textFaint, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>policy 编码</div>
+        <pre style={{
+          margin: 0, padding: ds.sp.m, borderRadius: 10,
+          background: c.code, fontFamily: ds.mono, fontSize: ds.fs.s,
+          color: c.text, lineHeight: 1.55, overflow: 'auto', maxHeight: 200,
+          border: '0.5px solid ' + c.borderSoft,
+        }}>{policyJson}</pre>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, hint, children }) {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.textFaint, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+        {hint && <span style={{ fontSize: ds.fs.xs, color: c.textFaint }}>{hint}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ═══ Challenge / proving overlay ═════════════════════════════════
+// The visual centerpiece — when the inbox challenge is processed.
+function ProvingOverlay({ challengeId, onClose }) {
+  const ds = useDS(); const c = colors(ds);
+  const inb = window.MOCK_INBOX.find((x) => x.id === challengeId);
+  const del = window.MOCK_DELEGATIONS.find((d) => d.id === inb.delegationId);
+  const a = window.MOCK_AGENTS.find((x) => x.id === del.agentId);
+  const [phase, setPhase] = React.useState('review'); // review | proving | done
+  const [tick, setTick] = React.useState(0);
+
+  // animate constraint progress
+  React.useEffect(() => {
+    if (phase !== 'proving') return undefined;
+    const id = setInterval(() => {
+      setTick((t) => {
+        if (t >= CIRCUIT_CONSTRAINTS.length) {
+          clearInterval(id);
+          setPhase('done');
+          return t;
+        }
+        return t + 1;
+      });
+    }, 280);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  const start = () => { setTick(0); setPhase('proving'); };
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.36)',
+      backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 25,
+    }}>
+      <div style={{
+        width: 760, maxHeight: 'calc(100% - 60px)',
+        background: c.bg, borderRadius: 16,
+        boxShadow: '0 24px 80px rgba(0,0,0,0.32)',
+        border: '0.5px solid ' + c.border,
+        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: `${ds.sp.l}px ${ds.sp.xl}px`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '0.5px solid ' + c.borderSoft,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: ds.sp.m }}>
+            <ZKSeal size={42} animated={phase === 'proving'} level="rich" />
+            <div>
+              <div style={{ fontSize: ds.fs.h, fontWeight: 600, color: c.text }}>
+                {phase === 'review' && '验证者请求出示'}
+                {phase === 'proving' && '生成 ZK 证明 π'}
+                {phase === 'done' && '✓ 已提交'}
+              </div>
+              <div style={{ fontSize: ds.fs.s, color: c.textSub }}>
+                {phase === 'review' && '请确认要披露的属性，应用将本地生成证明'}
+                {phase === 'proving' && '电路求解中 · 仅 CPU · 不上传任何私密数据'}
+                {phase === 'done' && '证明已发送至 ' + inb.fromLabel}
+              </div>
+            </div>
+          </div>
+          <Btn kind="ghost" onClick={onClose} style={{ padding: '4px 10px', fontSize: 18 }}>×</Btn>
+        </div>
+
+        <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.l }}>
+          {/* Disclosure summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.l }}>
+            <div>
+              <div style={{ fontSize: ds.fs.s, color: c.success, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span>●</span> 验证者将得知
+              </div>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {inb.requiredClaims.map((cl) => (
+                  <li key={cl} style={{
+                    padding: '6px 10px', background: 'color-mix(in oklab, ' + c.success + ' 8%, transparent)',
+                    borderRadius: 8, fontSize: ds.fs.m, color: c.text, fontFamily: ds.mono,
+                    border: '0.5px solid color-mix(in oklab, ' + c.success + ' 25%, transparent)',
+                  }}>{cl} = true</li>
+                ))}
+                <li style={{ padding: '6px 10px', background: 'color-mix(in oklab, ' + c.success + ' 8%, transparent)', borderRadius: 8, fontSize: ds.fs.m, color: c.textSub, border: '0.5px solid color-mix(in oklab, ' + c.success + ' 25%, transparent)' }}>
+                  这是一个被合法授权的 Agent 在操作
+                </li>
+              </ul>
+            </div>
+            <div>
+              <div style={{ fontSize: ds.fs.s, color: c.danger, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span>○</span> 验证者无法得知
+              </div>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {['您是谁（姓名/地址/具体年龄）', '设备公钥 pk_d', '完整的策略内容（金额上限）', '上次是否来过 (跨会话不可关联)'].map((x) => (
+                  <li key={x} style={{ padding: '6px 10px', background: c.chipBg, borderRadius: 8, fontSize: ds.fs.m, color: c.textSub, fontStyle: 'italic' }}>{x}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {/* Circuit progress */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.textFaint, textTransform: 'uppercase', letterSpacing: '0.04em' }}>电路约束 (11)</span>
+              <span style={{ fontSize: ds.fs.s, color: c.textFaint, fontFamily: ds.mono }}>~275,000 R1CS gates</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
+              {CIRCUIT_CONSTRAINTS.map((cn, i) => {
+                const state = phase === 'review' ? 'pending' : phase === 'done' ? 'done' : i < tick ? 'done' : i === tick ? 'active' : 'pending';
+                return (
+                  <div key={cn.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '5px 10px', borderRadius: 7,
+                    background: state === 'active' ? 'color-mix(in oklab, ' + c.accent + ' 14%, transparent)' : state === 'done' ? 'color-mix(in oklab, ' + c.success + ' 8%, transparent)' : 'transparent',
+                    transition: 'background 0.15s',
+                  }}>
+                    <span style={{
+                      width: 18, fontSize: ds.fs.s, fontFamily: ds.mono,
+                      color: state === 'active' ? c.accent : state === 'done' ? c.success : c.textFaint, fontWeight: 600,
+                    }}>{state === 'done' ? '✓' : cn.id}</span>
+                    <span style={{ flex: 1, fontSize: ds.fs.s, color: state === 'pending' ? c.textFaint : c.text }}>
+                      {cn.label}
+                    </span>
+                    {state === 'active' && <span style={{ fontSize: ds.fs.xs, color: c.accent, fontFamily: ds.mono }}>...</span>}
+                    {state === 'done' && <span style={{ fontSize: ds.fs.xs, color: c.textFaint, fontFamily: ds.mono }}>{cn.ms}ms</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {phase === 'done' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.s }}>
+              <Mono label="证明 π (4.2 KB)" full>0x29 a4 1c b6 ff e8 22 9d 4f a2 13 0c 88 d1 7e 55 22 0a 11 e8 …</Mono>
+              <Mono label="本次会话抄本 tr (nonce ‖ verifier ‖ timestamp)" full>{inb.nonce}</Mono>
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', gap: ds.sp.s,
+          padding: `${ds.sp.m}px ${ds.sp.xl}px ${ds.sp.l}px`,
+          borderTop: '0.5px solid ' + c.borderSoft,
+        }}>
+          {phase === 'review' && <>
+            <Btn kind="default" onClick={onClose}>拒绝</Btn>
+            <Btn kind="primary" onClick={start}>同意并生成证明</Btn>
+          </>}
+          {phase === 'proving' && <Btn kind="default" disabled>生成中…</Btn>}
+          {phase === 'done' && <Btn kind="primary" onClick={onClose}>完成</Btn>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ Agent-mode panels ═══════════════════════════════════════════
+// A simpler view for the agent perspective — its inbox of upstream
+// delegations + outgoing presentations.
+function AgentModeOverview() {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader
+        title="代理人视角"
+        subtitle="从 Agent 端看见的委托与会话 · 此模式可作为 Agent 服务的诊断面板"
+      />
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.l }}>
+        <Section title="活跃身份 · 我作为以下委托人代理">
+          <AgentDelegationStack />
+        </Section>
+        <Section title="待处理挑战" hint="来自 verifier 的 challenge / nonce">
+          <AgentChallengeList />
+        </Section>
+        <Section title="近期出示" hint="发送到 verifier 的 ZK 证明">
+          <SessionList sessions={window.MOCK_SESSIONS.slice(0, 4)} />
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function AgentDelegationStack() {
+  const ds = useDS(); const c = colors(ds);
+  const dels = window.MOCK_DELEGATIONS.filter((d) => d.status === 'active');
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: ds.sp.m }}>
+      {dels.map((d) => {
+        const a = window.MOCK_AGENTS.find((x) => x.id === d.agentId);
+        return (
+          <div key={d.id} style={{
+            padding: ds.sp.m, borderRadius: 12,
+            background: 'linear-gradient(135deg, ' + a.color + ' 0%, color-mix(in oklab, ' + a.color + ' 70%, #1d1c1a) 100%)',
+            color: '#fff', position: 'relative', overflow: 'hidden',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: ds.fs.xs, opacity: 0.7, fontFamily: ds.mono }}>DELEGATION</span>
+              <span style={{ fontSize: ds.fs.xs, opacity: 0.7 }}>at {a.name}</span>
+            </div>
+            <div style={{ fontSize: ds.fs.l, fontWeight: 600, marginBottom: 8 }}>{d.policy.allowed_claims.join(' + ')}</div>
+            <div style={{ fontSize: ds.fs.xs, opacity: 0.85, display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontFamily: ds.mono }}>rh {d.rh}</span>
+              <span>{d.presentationCount} 次</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgentChallengeList() {
+  const ds = useDS(); const c = colors(ds);
+  const challenges = window.MOCK_INBOX.filter((x) => x.type === 'challenge');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: ds.sp.s }}>
+      {challenges.map((it) => (
+        <div key={it.id} style={{
+          padding: ds.sp.m, borderRadius: 10,
+          background: 'transparent',
+          border: '0.5px solid ' + c.borderSoft,
+          display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: ds.sp.m,
+        }}>
+          <div>
+            <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: c.text }}>{it.fromLabel}</div>
+            <div style={{ fontSize: ds.fs.s, color: c.textSub }}>需要 {it.requiredClaims.join(', ')} · nonce <code style={{ fontFamily: ds.mono, fontSize: ds.fs.xs }}>{it.nonce}</code></div>
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <Pill tone="warn">等待委托人确认</Pill>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══ Settings panel ═══════════════════════════════════════════════
+function SettingsPanel() {
+  const ds = useDS(); const c = colors(ds);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <PageHeader title="设置" subtitle="设备密钥 · 颁发方信任列表 · 撤销服务" />
+      <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', flexDirection: 'column', gap: ds.sp.l }}>
+        <Section title="设备密钥 (sk_d)" hint="由 Secure Enclave 保管，不可导出">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.m }}>
+            <Mono label="设备公钥 pk_d" full>04:9a:b2:1f:e8:c4:32:7d:1a:ee:55:0c:11:2d:af:48</Mono>
+            <Mono label="算法">SM2 / sm2p256v1</Mono>
+            <Mono label="存储">Secure Enclave (T2)</Mono>
+            <Mono label="生成时间">2025-08-12 09:20:14</Mono>
+          </div>
+        </Section>
+        <Section title="信任的颁发方 (ipk 白名单)">
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {window.MOCK_CREDENTIALS.map((x, i) => (
+              <div key={x.id} style={{
+                display: 'grid', gridTemplateColumns: '40px 1fr auto', alignItems: 'center', gap: ds.sp.m,
+                padding: `${ds.sp.s}px 0`,
+                borderTop: i === 0 ? 'none' : '0.5px solid ' + c.borderSoft,
+              }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: c.bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: ds.mono, fontSize: 11, fontWeight: 600 }}>{x.issuerAbbr}</div>
+                <div>
+                  <div style={{ fontSize: ds.fs.m, fontWeight: 500, color: c.text }}>{x.issuer}</div>
+                  <div style={{ fontSize: ds.fs.xs, color: c.textFaint, fontFamily: ds.mono }}>ipk = 04:8a:91:b2:cd:ef:11:33:55:77:99:bb:dd:ff:00:22</div>
+                </div>
+                <Pill tone="success">受信任</Pill>
+              </div>
+            ))}
+          </div>
+        </Section>
+        <Section title="撤销服务 (RS)" hint="链上 Merkle 树撤销列表">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: ds.sp.m }}>
+            <Mono label="服务地址">rs.zk-agentauth.cn</Mono>
+            <Mono label="存储">链上合约 (TON)</Mono>
+            <Mono label="树深度">20</Mono>
+            <Mono label="当前 RL Merkle 根" full>0x4f02 ee19 9c af 21 e0 88 13 4f a1 99 c2 0d 4b 7e 55</Mono>
+          </div>
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══ Real Dispatch Overlay (SSE-based 5-phase progress) ══════════
+const PHASE_MAP = {
+  delegating:       { lbl: '① Alice 签发委托', det: '生成 P-256 委托签名 + policy.json' },
+  fetching_request: { lbl: '② 向 TripGo 申请挑战', det: 'POST /api/agent/request → 取回 reader_request.cbor' },
+  proving:          { lbl: '③ 生成 ZK 证明', det: 'Ligero v2 · 哈希 + 签名约束 · 约 5s' },
+  posting:          { lbl: '④ 投递订单', det: 'POST /api/agent/order (multipart) → 跨服务调用 TripGo' },
+  done:             { lbl: '⑤ 完成', det: 'TripGo 完成 4 项校验 → 订单入库' },
+};
+const PHASE_ORDER = ['delegating', 'fetching_request', 'proving', 'posting', 'done'];
+
+function RealDispatchOverlay({ taskId, hotelName, onClose }) {
+  const ds = useDS(); const c = colors(ds);
+  const [events, setEvents] = React.useState([]);
+  const [proofSize, setProofSize] = React.useState(0);
+  const [proverLines, setProverLines] = React.useState([]);
+  const [final, setFinal] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const consoleRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!taskId) return;
+    const es = new EventSource('/api/agent/task/' + taskId + '/stream');
+    const push = (phase, data) => setEvents(ev => [...ev, { phase, ...data }]);
+
+    es.addEventListener('delegating',       e => push('delegating', JSON.parse(e.data)));
+    es.addEventListener('delegated',        e => push('delegated', JSON.parse(e.data)));
+    es.addEventListener('fetching_request', e => push('fetching_request', JSON.parse(e.data)));
+    es.addEventListener('got_request',      e => push('got_request', JSON.parse(e.data)));
+    es.addEventListener('proving',          e => push('proving', JSON.parse(e.data)));
+    es.addEventListener('prover_log',       e => {
+      const d = JSON.parse(e.data);
+      setProverLines(p => [...p.slice(-49), d.data.line]);
+    });
+    es.addEventListener('proven',           e => {
+      const d = JSON.parse(e.data);
+      push('proven', d);
+      setProofSize(d.data.proof_size || 0);
+    });
+    es.addEventListener('posting',          e => push('posting', JSON.parse(e.data)));
+    es.addEventListener('done',             e => {
+      const d = JSON.parse(e.data);
+      push('done', d);
+      setFinal(d.data);
+      es.close();
+    });
+    es.addEventListener('failed',           e => {
+      const d = JSON.parse(e.data);
+      setError(d.data.error || '任务失败');
+      es.close();
+    });
+    return () => es.close();
+  }, [taskId]);
+
+  React.useEffect(() => {
+    if (consoleRef.current) consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+  }, [proverLines]);
+
+  const phasesSeen = new Set(events.map(e => e.phase));
+  const phaseStatus = (p) => {
+    if (final) {
+      if (p === 'done') return final.accepted ? 'done' : 'failed';
+      return 'done';
+    }
+    if (error) return p === events[events.length - 1]?.phase ? 'failed' : phasesSeen.has(p) ? 'done' : 'pending';
+    const doneMap = { delegating: 'delegated', fetching_request: 'got_request', proving: 'proven', posting: 'done' };
+    if (doneMap[p] && phasesSeen.has(doneMap[p])) return 'done';
+    if (p === 'done' && phasesSeen.has('done')) return 'done';
+    if (phasesSeen.has(p)) return 'active';
+    return 'pending';
+  };
+
+  const checks = final?.checks || {};
+  const checkDot = (v) => v === 'PASS' ? c.success : v ? c.danger : c.textFaint;
+  const isBusy = !final && !error;
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.42)',
+      backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 25,
+    }}>
+      <div style={{
+        width: 820, maxHeight: 'calc(100% - 48px)',
+        background: c.bg, borderRadius: 16,
+        boxShadow: '0 24px 80px rgba(0,0,0,0.36)',
+        border: '0.5px solid ' + c.border,
+        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: `${ds.sp.l}px ${ds.sp.xl}px`,
+          display: 'flex', alignItems: 'center', gap: ds.sp.m,
+          borderBottom: '0.5px solid ' + c.borderSoft,
+          justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: ds.sp.m }}>
+            <ZKSeal size={42} animated={isBusy} level="rich" />
+            <div>
+              <div style={{ fontSize: ds.fs.h, fontWeight: 600, color: c.text }}>
+                {error ? '任务失败' : final ? (final.accepted ? '✓ 订单完成' : '✕ 订单被拒绝') : 'Agent 执行中...'}
+              </div>
+              <div style={{ fontSize: ds.fs.s, color: c.textSub }}>
+                {hotelName} · task: <code style={{ fontFamily: ds.mono, fontSize: 10 }}>{taskId}</code>
+              </div>
+            </div>
+          </div>
+          {(final || error) && <Btn kind="ghost" onClick={onClose} style={{ padding: '4px 10px', fontSize: 18 }}>×</Btn>}
+        </div>
+
+        <div style={{ flex: 1, overflow: 'auto', padding: ds.sp.xl, display: 'flex', gap: ds.sp.l }}>
+          {/* Timeline */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {PHASE_ORDER.map((p, idx) => {
+              const st = phaseStatus(p);
+              const cfg = PHASE_MAP[p];
+              return (
+                <div key={p} style={{ display: 'flex', alignItems: 'flex-start', gap: ds.sp.m, paddingBottom: ds.sp.l, position: 'relative' }}>
+                  {idx < PHASE_ORDER.length - 1 && (
+                    <div style={{ position: 'absolute', left: 13, top: 28, bottom: 0, width: 1.5, background: c.border }} />
+                  )}
+                  <div style={{
+                    width: 28, height: 28, borderRadius: '50%', flexShrink: 0, zIndex: 1,
+                    background: st === 'done' ? c.success : st === 'active' ? 'transparent' : st === 'failed' ? c.danger : c.bg2,
+                    border: '2px solid ' + (st === 'done' ? c.success : st === 'active' ? c.accent : st === 'failed' ? c.danger : c.border),
+                    borderTopColor: st === 'active' ? 'transparent' : undefined,
+                    animation: st === 'active' ? 'zk-spin-cw 0.8s linear infinite' : 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {st === 'done' && <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>✓</span>}
+                    {st === 'failed' && <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>✕</span>}
+                  </div>
+                  <div style={{ flex: 1, paddingTop: 3 }}>
+                    <div style={{ fontSize: ds.fs.m, fontWeight: 600, color: st === 'pending' ? c.textFaint : c.text }}>{cfg.lbl}</div>
+                    <div style={{ fontSize: ds.fs.s, color: c.textFaint, marginTop: 2 }}>{cfg.det}</div>
+                    {p === 'proving' && proofSize > 0 && st === 'done' && (
+                      <div style={{ marginTop: 4, padding: '4px 8px', background: c.code, borderRadius: 5, fontSize: 10, fontFamily: ds.mono, color: c.accent }}>
+                        proof.bin · {(proofSize / 1024).toFixed(1)} KB · Ligero v2
+                      </div>
+                    )}
+                    {p === 'done' && final && (
+                      <div style={{ marginTop: 4, padding: '4px 8px', background: final.accepted ? 'color-mix(in oklab, ' + c.success + ' 10%, transparent)' : 'color-mix(in oklab, ' + c.danger + ' 10%, transparent)', borderRadius: 5, fontSize: 10, fontFamily: ds.mono, color: final.accepted ? c.success : c.danger }}>
+                        order_id: {final.order_id} · {final.accepted ? 'ACCEPT' : 'REJECT'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Prover log */}
+            {proverLines.length > 0 && (
+              <div>
+                <div style={{ fontSize: ds.fs.xs, color: c.textFaint, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 6 }}>Prover 日志（实时）</div>
+                <div ref={consoleRef} style={{
+                  background: '#0f1419', borderRadius: 8, padding: '10px 14px',
+                  maxHeight: 180, overflowY: 'auto', fontFamily: ds.mono, fontSize: 10.5, lineHeight: 1.7, color: '#9ca3af',
+                }}>
+                  {proverLines.map((l, i) => (
+                    <div key={i} style={{ color: /proof_len|com_proof|Done/i.test(l) ? '#6ee7b7' : undefined }}>{l}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div style={{ padding: '10px 14px', background: 'color-mix(in oklab, ' + c.danger + ' 8%, transparent)', border: '0.5px solid color-mix(in oklab, ' + c.danger + ' 30%, transparent)', borderRadius: 8, fontSize: ds.fs.s, color: c.danger, fontFamily: ds.mono, wordBreak: 'break-all' }}>
+                {error}
+              </div>
+            )}
+          </div>
+
+          {/* Right panel: checks + badge */}
+          <div style={{ width: 240, display: 'flex', flexDirection: 'column', gap: ds.sp.m, flexShrink: 0 }}>
+            <div style={{ background: c.bgPanel, border: '0.5px solid ' + c.border, borderRadius: 12, padding: ds.sp.m }}>
+              <div style={{ fontSize: ds.fs.s, fontWeight: 600, color: c.text, marginBottom: 10 }}>TripGo 校验结果</div>
+              {[
+                ['ZK Proof', checks.zk_proof],
+                ['Delegation Sig', checks.delegation_sig],
+                ['Policy Claims', checks.policy_claims],
+                ['Policy Predicates', checks.policy_predicates],
+                ['Policy Expiry', checks.policy_expiry],
+                ['Delegation Revocation', checks.delegation_revocation],
+                ['Business Rule', checks.business_rule],
+                ['Overall', checks.overall],
+              ].map(([label, val]) => {
+                const short = val && val.startsWith('FAIL') ? 'FAIL' : val;
+                return (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 0', borderBottom: '0.5px solid ' + c.borderSoft, fontSize: ds.fs.s }} title={val || ''}>
+                    <span style={{ color: c.textSub }}>{label}</span>
+                    <span style={{ fontFamily: ds.mono, fontSize: 11, fontWeight: 700, color: checkDot(short) }}>{short || '...'}</span>
+                  </div>
+                );
+              })}
+              {checks.business_rule && checks.business_rule !== 'PASS' && (
+                <div style={{ marginTop: 6, padding: '6px 8px', background: 'color-mix(in oklab, ' + c.danger + ' 10%, transparent)', border: '0.5px solid color-mix(in oklab, ' + c.danger + ' 30%, transparent)', borderRadius: 6, fontSize: 10.5, color: c.danger, fontFamily: ds.mono, lineHeight: 1.5 }}>
+                  {checks.business_rule}
+                </div>
+              )}
+            </div>
+
+            {final?.accepted && (
+              <div style={{
+                background: 'linear-gradient(135deg, #5B6CFF 0%, #7c3aed 100%)',
+                borderRadius: 12, padding: ds.sp.m, color: '#fff', textAlign: 'center',
+              }}>
+                <ZKSeal size={64} animated={false} level="rich" />
+                <div style={{ fontFamily: ds.mono, fontSize: 10, opacity: 0.8, marginTop: 4 }}>VERIFIED</div>
+                <div style={{ fontSize: ds.fs.s, fontWeight: 600, marginTop: 6 }}>{final.order?.hotel_name || hotelName}</div>
+                {final.order && (
+                  <div style={{ fontSize: ds.fs.xs, opacity: 0.85, marginTop: 2 }}>
+                    ¥{final.order.amount?.toLocaleString()} · {final.order.checkin} → {final.order.checkout}
+                  </div>
+                )}
+                <div style={{ fontFamily: ds.mono, fontSize: 9, opacity: 0.65, marginTop: 4 }}>{final.order_id}</div>
+              </div>
+            )}
+
+            {(final || error) && (
+              <Btn kind="primary" onClick={onClose} style={{ width: '100%', justifyContent: 'center' }}>
+                {final?.accepted ? '再来一单' : '关闭'}
+              </Btn>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+window.DelegationWizard = DelegationWizard;
+window.ProvingOverlay = ProvingOverlay;
+window.AgentModeOverview = AgentModeOverview;
+window.SettingsPanel = SettingsPanel;
+
+
+
+
+// ===== App shell (Sidebar + window chrome) =====
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#5B6CFF",
+  "dark": false,
+  "density": "regular",
+  "zkLevel": "rich"
+}/*EDITMODE-END*/;
+
+function TrafficLights() {
+  const dot = (bg) => <div style={{ width: 12, height: 12, borderRadius: '50%', background: bg, border: '0.5px solid rgba(0,0,0,0.12)' }} />;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {dot('#ff5f57')}{dot('#febc2e')}{dot('#28c840')}
+    </div>
+  );
+}
+
+function Sidebar({ mode, setMode, route, setRoute }) {
+  const ds = window.useDS(); const c = window.colors(ds);
+  const inboxUnread = window.MOCK_INBOX.filter((x) => x.unread).length;
+  const items = mode === 'delegator'
+    ? [
+        { id: 'inbox', label: '收件箱', icon: '✉', badge: inboxUnread },
+        { id: 'agents', label: 'Agent', icon: '◉' },
+        { id: 'wallet', label: '凭证钱包', icon: '◫' },
+        { id: 'dels', label: '委托管理', icon: '⛨' },
+        { id: 'sessions', label: '出示日志', icon: '⊜' },
+        { id: 'settings', label: '设置', icon: '⚙' },
+      ]
+    : [
+        { id: 'agent_overview', label: '总览', icon: '◉' },
+        { id: 'agent_inbox', label: '挑战收件箱', icon: '✉' },
+        { id: 'sessions', label: '出示日志', icon: '⊜' },
+        { id: 'settings', label: '设置', icon: '⚙' },
+      ];
+  return (
+    <div style={{
+      width: 220, height: '100%', flexShrink: 0,
+      background: c.dark ? 'rgba(30,30,36,0.7)' : 'rgba(248,246,242,0.7)',
+      backdropFilter: 'blur(36px) saturate(160%)', WebkitBackdropFilter: 'blur(36px) saturate(160%)',
+      borderRight: '0.5px solid ' + c.borderSoft,
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ padding: '12px 14px' }}><TrafficLights /></div>
+      <div style={{ padding: '4px 14px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <window.ZKSeal size={28} animated={false} level="rich" />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: c.text, letterSpacing: '-0.01em' }}>ZK-AgentAuth</div>
+          <div style={{ fontSize: 10, color: c.textFaint, fontFamily: ds.mono, letterSpacing: '0.04em' }}>v0.3.1 · Alice 张</div>
+        </div>
+      </div>
+      <div style={{ padding: '0 12px 8px' }}>
+        <div style={{ display: 'flex', padding: 2, borderRadius: 8, background: c.chipBg, position: 'relative' }}>
+          <div style={{
+            position: 'absolute', top: 2, left: mode === 'delegator' ? 2 : '50%', width: 'calc(50% - 2px)',
+            height: 'calc(100% - 4px)', borderRadius: 6,
+            background: c.dark ? 'rgba(60,60,68,0.95)' : 'rgba(255,255,255,0.95)',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.08)', transition: 'left 0.18s',
+          }} />
+          {[['delegator', '委托人'], ['agent', '代理人']].map(([k, l]) => (
+            <button key={k} onClick={() => setMode(k)} style={{
+              flex: 1, position: 'relative', appearance: 'none', border: 0, background: 'transparent',
+              padding: '6px 0', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+              color: mode === k ? c.text : c.textSub, font: 'inherit',
+            }}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: '4px 8px', display: 'flex', flexDirection: 'column', gap: 1, overflow: 'auto' }}>
+        {items.map((it) => {
+          const sel = route === it.id || (it.id === 'agents' && route.startsWith('agent_chat:'))
+            || (it.id === 'dels' && route.startsWith('del:'));
+          return (
+            <button key={it.id} onClick={() => setRoute(it.id)} style={{
+              appearance: 'none', border: 0, font: 'inherit', textAlign: 'left',
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
+              background: sel ? (c.dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') : 'transparent',
+              color: c.text, fontSize: 13, fontWeight: sel ? 600 : 500,
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 6,
+                background: sel ? c.accent : c.chipBg,
+                color: sel ? '#fff' : c.textSub,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, flexShrink: 0,
+              }}>{it.icon}</span>
+              <span style={{ flex: 1 }}>{it.label}</span>
+              {it.badge > 0 && (
+                <span style={{
+                  background: c.accent, color: '#fff', borderRadius: 999,
+                  fontSize: 10, fontWeight: 600, padding: '1px 6px', fontFamily: ds.mono,
+                }}>{it.badge}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ padding: 12, borderTop: '0.5px solid ' + c.borderSoft, fontSize: 10, color: c.textFaint }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.success }} />
+          <span>Secure Enclave 已连接</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+  const [mode, setMode] = React.useState('delegator');
+  const [route, setRoute] = React.useState('agents');
+  const [wizard, setWizard] = React.useState(null);
+  const [dispatchOverlay, setDispatchOverlay] = React.useState(null); // { taskId, hotelName }
+
+  React.useEffect(() => { document.body.dataset.dark = t.dark ? '1' : '0'; }, [t.dark]);
+
+  const ctxTheme = { accent: t.accent, dark: t.dark, zkLevel: t.zkLevel };
+  const openAgent = (id) => setRoute('agent_chat:' + id);
+  const openDel = (id) => setRoute('del:' + id);
+  const handleDispatch = (taskId, hotelName) => setDispatchOverlay({ taskId, hotelName });
+
+  // Saving a delegation appends it to window.MOCK_DELEGATIONS so that
+  // DelegationsPanel / AgentChat / etc. can pick it up without prop drilling.
+  // We bump a version number to force a re-render of consumers.
+  const [delsVersion, setDelsVersion] = React.useState(0);
+  const handleSaveDelegation = (newDel) => {
+    window.MOCK_DELEGATIONS = [newDel, ...window.MOCK_DELEGATIONS];
+    setDelsVersion(v => v + 1);
+  };
+
+  const handleChallenge = async (challengeId) => {
+    const inb = window.MOCK_INBOX.find((x) => x.id === challengeId);
+    try {
+      const hs = await (await fetch('/api/catalog')).json();
+      const hotel = Array.isArray(hs) && hs.length > 0 ? hs[0] : { id: 'hotel-001', name: 'TripGo' };
+      const expires = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 19) + 'Z';
+      const r = await fetch('/api/agent/dispatch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hotel_id: hotel.id,
+          checkin: '2026-05-10', checkout: '2026-05-12',
+          claims: (inb && inb.requiredClaims) || ['age_over_18'],
+          expires, agent_id: 'tripgo-agent',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const { task_id } = await r.json();
+      handleDispatch(task_id, '回应来自 ' + (inb ? inb.fromLabel : '验证者') + ' 的挑战');
+    } catch (e) {
+      alert('处理挑战失败：' + String(e));
+    }
+  };
+
+  let content;
+  if (mode === 'delegator') {
+    if (route === 'inbox') content = <window.InboxPanel onChallenge={handleChallenge} />;
+    else if (route === 'agents') content = <window.AgentsPanel onPickAgent={openAgent} onNewDelegation={(id) => setWizard({ agentId: id })} />;
+    else if (route.startsWith('agent_chat:')) content = <window.AgentChat agentId={route.split(':')[1]} onBack={() => setRoute('agents')} onNewDelegation={(id) => setWizard({ agentId: id })} onDispatch={handleDispatch} />;
+    else if (route === 'wallet') content = <window.WalletPanel />;
+    else if (route === 'dels') content = <window.DelegationsPanel onOpen={openDel} onNewDelegation={() => setWizard({})} />;
+    else if (route.startsWith('del:')) content = <window.DelegationDetail delId={route.split(':')[1]} onBack={() => setRoute('dels')} />;
+    else if (route === 'sessions') content = <window.SessionsPanel />;
+    else if (route === 'settings') content = <window.SettingsPanel />;
+  } else {
+    if (route === 'agent_inbox') content = <window.InboxPanel onChallenge={handleChallenge} />;
+    else if (route === 'sessions') content = <window.SessionsPanel />;
+    else if (route === 'settings') content = <window.SettingsPanel />;
+    else content = <window.AgentModeOverview />;
+  }
+
+  React.useEffect(() => {
+    if (mode === 'agent' && !['agent_overview','agent_inbox','sessions','settings'].includes(route)) {
+      setRoute('agent_overview');
+    } else if (mode === 'delegator' && ['agent_overview','agent_inbox'].includes(route)) {
+      setRoute('agents');
+    }
+  }, [mode]);
+
+  const c = window.colors({ accent: t.accent, dark: t.dark });
+
+  return (
+    <window.ThemeCtx.Provider value={ctxTheme}>
+      <window.DensityCtx.Provider value={t.density}>
+        <div style={{
+          width: 1240, height: 820, position: 'relative',
+          background: c.bg, color: c.text,
+          borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 0 0 0.5px rgba(0,0,0,0.25), 0 32px 80px rgba(0,0,0,0.32)',
+          display: 'flex',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro", "PingFang SC", "Helvetica Neue", sans-serif',
+        }}>
+          <Sidebar mode={mode} setMode={setMode} route={route} setRoute={setRoute} />
+          <div style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            {content}
+          </div>
+          {wizard && <window.DelegationWizard initialAgentId={wizard.agentId} onClose={() => setWizard(null)} onCreated={() => setRoute('dels')} onSave={handleSaveDelegation} />}
+          {dispatchOverlay && <RealDispatchOverlay taskId={dispatchOverlay.taskId} hotelName={dispatchOverlay.hotelName} onClose={() => setDispatchOverlay(null)} />}
+          <window.TweaksPanel title="Tweaks">
+            <window.TweakSection label="主题">
+              <window.TweakColor label="主题色" value={t.accent}
+                options={['#5B6CFF', '#3FAA82', '#D49250', '#8e6fe0']}
+                onChange={(v) => setTweak('accent', v)} />
+              <window.TweakToggle label="暗色模式" value={t.dark} onChange={(v) => setTweak('dark', v)} />
+            </window.TweakSection>
+            <window.TweakSection label="布局">
+              <window.TweakRadio label="信息密度" value={t.density}
+                options={['compact', 'regular', 'comfy']}
+                onChange={(v) => setTweak('density', v)} />
+            </window.TweakSection>
+            <window.TweakSection label="ZK 视觉化">
+              <window.TweakRadio label="强弱" value={t.zkLevel}
+                options={['minimal', 'rich']}
+                onChange={(v) => setTweak('zkLevel', v)} />
+            </window.TweakSection>
+          </window.TweaksPanel>
+        </div>
+      </window.DensityCtx.Provider>
+    </window.ThemeCtx.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+</script>
+</body>
+</html>

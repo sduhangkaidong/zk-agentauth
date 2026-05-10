@@ -1,0 +1,29 @@
+# Build artifacts
+/build/
+/build-*/
+**/CMakeCache.txt
+**/CMakeFiles/
+**/cmake_install.cmake
+**/Makefile
+!web/Makefile
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+/web/.venv/
+
+# Runtime data (regenerated on each run)
+/web/data/wallet/holder/
+/web/data/wallet/delegation/
+/web/data/wallet/tasks/
+/web/data/shared/issuer_public/
+/web/data/tripgo/orders.json
+/web/data/tripgo/tasks/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
